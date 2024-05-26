@@ -1,9 +1,9 @@
 {
-    "name": "Tg-encoder",
+    "name": "pokemon",
     "description": "A telegram bot which encodes videos.",
     "logo": "https://telegra.ph/file/75ee20ec8d8c8bba84f02.jpg",
     "keywords": ["Telegram","python", "Video","Compressor","Encoder"],
-    "repository": "https://github.com/nubuki-all/tg-encoder",
+    "repository": "https://github.com/NexDaisongoing/Enc",
     "success_url": "https://t.me/Ani_Mine",
     "stack": "container",
     "env": {
