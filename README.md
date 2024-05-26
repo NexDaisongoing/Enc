@@ -91,3 +91,5 @@ __(Coming Soon)__
 ### Deploy
 
 [![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy)
+
+https://heroku.com/deploy?template=https://github.com/NexDaisongoing/Enc
