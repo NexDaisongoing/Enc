@@ -6,6 +6,9 @@ from feedparser import parse as feedparse
 from bot import (
     caption_file,
     ffmpeg_file,
+    ffmpeg_file2,
+    ffmpeg_file3,
+    ffmpeg_file4,
     filter_file,
     mux_file,
     parse_file,
@@ -13,10 +16,9 @@ from bot import (
     rss_dict_lock,
     thumb,
 )
-from bot.config import conf
-from bot.startup.before import DOCKER_DEPLOYMENT as d_docker
+from bot.config import _bot, conf
 from bot.startup.before import entime
-from bot.utils.bot_utils import RSS_DICT as rss_dict
+from bot.utils.bot_utils import encode_job as ejob
 from bot.utils.bot_utils import (
     get_aria2,
     get_bqueue,
@@ -60,7 +62,7 @@ async def nuke(event, args, client):
     if not user_is_owner(event.sender_id):
         return await msg_sleep_delete(event, "😂", time=5, del_rep=True)
     try:
-        if not d_docker:
+        if not _bot.docker_deployed:
             await event.reply("`Exited.`")
             await clean_all_qb()
             await qclean()
@@ -223,6 +225,52 @@ async def allowgroupenc(event, args, client):
         )
 
 
+async def custom_rename(event, args, client):
+    """
+    Set a custom rename format if args are passed without parameters
+    Available variables:
+        {season} Season number ('S' not added)
+        {episode} Episode number
+        {title} Title of video
+        {quality} Quality of anime (Already in [])
+        {codec} codec of video (Already in [])
+        {audio} Audio(s) in video
+        *Extension is added automatically
+    Or send one of the following params:
+        -c To check if a custom rename is set
+        -d to delete previously set custom_rename
+        -r to reset back to what was set in env
+
+    """
+    arg, args = get_args(
+        ["-c", "store_true"],
+        ["-d", "store_true"],
+        ["-r", "store_true"],
+        to_parse=args,
+        get_unknown=True,
+    )
+    if (arg.c or arg.d or arg.r) and args:
+        return await event.reply(f"`{custom_rename.__doc__}`")
+    state = f"**Custom rename format is {'not ' if not _bot.custom_rename else str()}present.**"
+    if arg.c:
+        return await event.reply(state)
+    if arg.d:
+        if not _bot.custom_rename:
+            return await event.reply(state)
+        _bot.custom_rename = None
+        await save2db2(None, "cus_rename")
+        return await event.reply("Custom rename format deleted.")
+    if arg.r:
+        if not conf.CUSTOM_RENAME:
+            return await event.reply("Custom rename format not added in env.")
+        _bot.custom_rename = conf.CUSTOM_RENAME.strip()
+        await save2db2(_bot.custom_rename, "cus_rename")
+        return await event.reply("Custom rename format has been reset to value in env.")
+    _bot.custom_rename = args
+    await save2db2(args, "cus_rename")
+    return await event.reply("**Custom rename format has been changed.**")
+
+
 async def set_mux_args(event, args, client):
     """
     Set, reset or disable muxing after transcoding.
@@ -283,23 +331,45 @@ async def change(event, args, client):
     Changes bot encoding params;
 
     Requires full shell command with '''{}''' for input and output (use double quotes for better performance)
-        - Binary must me be included in argument and must installed locally or in docker
+        - Binary name must me be included in argument and must installed locally or in docker
         - Both ffmpeg and handbrake-cli are tested and supported. (Test if others work)
         - ffmpeg two-pass requires specifying input twice which is currently not supported.
             • As a workaround you can create a custom bash script
               check handbrakecli.sh for an example on how to create a custom script then do /set myscript.sh
               for bot to always use your script while encoding.
     Or… path/to/bash_script as arguments.
+    To set for FFMPEG2(or 3 or 4), add -2 or -3 and so on, before the shell command for encoding.
     """
     if not user_is_owner(event.sender_id):
         return await try_delete(event)
     try:
-        with open(ffmpeg_file, "w") as file:
-            file.write(str(args) + "\n")
+        if args.startswith("-2"):
+            args = (args.split("-2", maxsplit=1)[1]).strip()
+            file = ffmpeg_file2
+            db = "ffmpeg2"
+            s = "2"
+        elif args.startswith("-3"):
+            args = (args.split("-3", maxsplit=1)[1]).strip()
+            file = ffmpeg_file3
+            db = "ffmpeg3"
+            s = "3"
+        elif args.startswith("-4"):
+            args = (args.split("-4", maxsplit=1)[1]).strip()
+            file = ffmpeg_file4
+            db = "ffmpeg4"
+            s = "4"
+        else:
+            file = ffmpeg_file
+            db = "ffmpeg"
+            s = str()
 
-        await save2db2(args, "ffmpeg")
+        with open(file, "w") as ffile:
+            ffile.write(str(args) + "\n")
+
+        await save2db2(args, db)
+        ejob.reset() if s else None
         await event.reply(
-            f"<pre>\n<code class='language-Changed ffmpeg CLI parameters to:'>{args}</code>\n</pre>",
+            f"<pre>\n<code class='language-Changed ffmpeg{s} CLI parameters to:'>{args}</code>\n</pre>",
             parse_mode="html",
         )
     except Exception:
@@ -309,15 +379,37 @@ async def change(event, args, client):
 async def check(event, args, client):
     """
     Get custom encoding params.
-    Requires no arguments and any given will be ignored.
+    Arguments:
+        -2
+        -3
+        -4
+        To check for ffmpeg2, 3 and 4 custom encoding params
+    No argument to check first encoding params
     """
     if not user_is_owner(event.sender_id):
         return await try_delete(event)
-    with open(ffmpeg_file, "r") as file:
-        ffmpeg = file.read().rstrip()
+    if not args:
+        file = ffmpeg_file
+        args = str()
+    elif "-2" in (args := args[:2]):
+        file = ffmpeg_file2
+    elif "-3" in args:
+        file = ffmpeg_file3
+    elif "-4" in args:
+        file = ffmpeg_file4
+    else:
+        return
+
+    if not file_exists(file):
+        return await event.reply(
+            "**Encoding params not found, use /set to set encoding params.**"
+        )
+
+    with open(file, "r") as ffile:
+        ffmpeg = ffile.read().rstrip()
 
     await event.reply(
-        f"<pre>\n<code class='language-Current ffmpeg CLI parameters:'>{ffmpeg}</code>\n</pre>",
+        f"<pre>\n<code class='language-Current ffmpeg{args[1:]} CLI parameters:'>{ffmpeg}</code>\n</pre>",
         parse_mode="html",
     )
 
@@ -325,18 +417,80 @@ async def check(event, args, client):
 async def reffmpeg(event, args, client):
     """
     Reset encoding params.
-    Default value to reset to, is contained in .config
-    Requires no argument.
+    Default value to reset to, it is either set in .env or contained in .config
+    Arguments:
+        -2
+        -3
+        -4
+        To reset or unset ffmpeg2,3,4
+        No argument for first encoding param
     """
     if not user_is_owner(event.sender_id):
         return await try_delete(event)
     try:
+        if args and (args := args[:2]) in ("-2", "-3", "-4"):
+            return await reffmpeg2(event, args, client)
         with open(ffmpeg_file, "w") as file:
             file.write(str(conf.FFMPEG) + "\n")
 
         await save2db2(conf.FFMPEG, "ffmpeg")
         await event.reply(
             f"<pre>\n<code class='Reseted ffmpeg CLI parameters to:'>{conf.FFMPEG}</code>\n</pre>",
+            parse_mode="html",
+        )
+    except Exception:
+        await logger(Exception)
+
+
+async def reffmpeg2(event, args, client):
+    """
+    Helper function to assist <reffmpeg>
+    """
+    try:
+        s = args[1:]
+        if "-2" in args:
+            if not conf.FFMPEG2 and not file_exists(ffmpeg_file2):
+                res = f"FFMPEG{s} not set in .env or bot."
+            else:
+                if file_exists(ffmpeg_file2):
+                    s_remove(ffmpeg_file2)
+                    await save2db2(None, f"ffmpeg{s}")
+                    res = f"FFMPEG{s} params deleted.\nTry again to reset to the param in .env"
+                else:
+                    with open(ffmpeg_file2, "w") as file:
+                        file.write(str(conf.FFMPEG2) + "\n")
+                    await save2db2(conf.FFMPEG2, f"ffmpeg{s}")
+                    res = f"<pre>\n<code class='Reseted ffmpeg{s} CLI parameters to:'>{conf.FFMPEG2}</code>\n</pre>"
+        elif "-3" in args:
+            if not conf.FFMPEG3 and not file_exists(ffmpeg_file3):
+                res = f"FFMPEG{s} not set in .env or bot."
+            else:
+                if file_exists(ffmpeg_file3):
+                    s_remove(ffmpeg_file3)
+                    await save2db2(None, f"ffmpeg{s}")
+                    res = f"FFMPEG{s} params deleted.\nTry again to reset to the param in .env"
+                else:
+                    with open(ffmpeg_file3, "w") as file:
+                        file.write(str(conf.FFMPEG3) + "\n")
+                    await save2db2(conf.FFMPEG3, f"ffmpeg{s}")
+                    res = f"<pre>\n<code class='Reseted ffmpeg{s} CLI parameters to:'>{conf.FFMPEG3}</code>\n</pre>"
+        elif "-4" in args:
+            if not conf.FFMPEG4 and not file_exists(ffmpeg_file4):
+                res = f"FFMPEG{s} not set in .env or bot."
+            else:
+                if file_exists(ffmpeg_file4):
+                    s_remove(ffmpeg_file4)
+                    await save2db2(None, f"ffmpeg{s}")
+                    res = f"FFMPEG{s} params deleted.\nTry again to reset to the param in .env"
+                else:
+                    with open(ffmpeg_file4, "w") as file:
+                        file.write(str(conf.FFMPEG4) + "\n")
+                    await save2db2(conf.FFMPEG4, f"ffmpeg{s}")
+                    res = f"<pre>\n<code class='Reseted ffmpeg{s} CLI parameters to:'>{conf.FFMPEG4}</code>\n</pre>"
+
+        ejob.reset()
+        await event.reply(
+            res,
             parse_mode="html",
         )
     except Exception:
@@ -462,14 +616,19 @@ async def auto_rename(event, args, client):
     Required arguments:
         - {anime_name} [Required] (get by clicking i button while downloadingl
         - {replace_name} [Required] (if anime_name is matched use this instead)
-        - {replace_cap} [Optional]
+        - {replace_caption} [Optional]
             • if not specified caption inherits replace_name.
             • if '0', a digit, is passed, filter is ignored for caption.
             • if '1', a digit, is passed, it is the same as not specifying.
-            • if anything else is specified it uses that as captain name instead.
-        Both {replace_name} and {replace_cap} also accept '00', a double digit
-        which essentially disables all fiter and anilist parsing
-        for the anime_name.
+            • if anything else is specified it uses that as caption name instead.
+        - {replace_banner} [Optional]
+            • if not specified, do nothing.
+            • if '0', a digit, is passed, disables anilist for banner & thumbnail and banner inherits the result of {replace_caption}
+            • if '1', a digit, is passed, value resulting from {replace_caption} is parsed by anilist for banner and thumbnail
+            • if any other value is passed it is parsed by anilist for banner and thumbnail
+        {replace_name}, {replace_caption} and {replace_banner} also accept '00', a double digit
+        which essentially disables all fiter and anilist parsing for the anime_name.
+        {replace_banner} cannot be set without {replace_caption} since it depends on it
 
     How to use:
         Example : /name My Little Puppy|MLP|0
@@ -806,7 +965,7 @@ async def rss_list(event, args, client):
     """
     if not user_is_owner(event.sender_id):
         return
-    if not rss_dict:
+    if not _bot.rss_dict:
         return await event.reply("<b> No subscriptions!</b>", parse_mode="html")
     list_feed = str()
     pre_event = event
@@ -817,7 +976,7 @@ async def rss_list(event, args, client):
         return ", ".join(["(" + ", ".join(map(str, sublist)) + ")" for sublist in ftr])
 
     async with rss_dict_lock:
-        for i, (title, data) in zip(itertools.count(1), list(rss_dict.items())):
+        for i, (title, data) in zip(itertools.count(1), list(_bot.rss_dict.items())):
             list_feed += f"\n\n{i}.<b>Title:</b> <code>{title}</code>\n<b>Feed Url: </b><code>{data['link']}</code>\n"
             list_feed += f"<b>Chat:</b> <code>{data['chat'] or 'Default'}</code>\n"
             list_feed += f"<b>Command:</b> <code>{data['command']}</code>\n"
@@ -861,7 +1020,7 @@ async def rss_get(event, args, client):
 
     title = args
     count = int(arg.a)
-    data = rss_dict.get(title)
+    data = _bot.rss_dict.get(title)
     if not (data and count > 0):
         return await event.reply(f"`{rss_get.__doc__}`")
     try:
@@ -903,8 +1062,8 @@ async def rss_editor(event, args, client):
     simply pass the rss title with the following arguements:
         Additional args:
             -c (/command): command to prefix the rss link
-            -exf (what_to_exclude): keyword of words to fiter out*
-            -inf (what_to_include): keywords to include*
+            --exf (what_to_exclude): keyword of words to fiter out*
+            --inf (what_to_include): keywords to include*
             --chat (chat_id) chat to send rss overides RSS_CHAT pass 'default' to reset.
             -p () to pause the rss feed
             -r () to resume the rss feed
@@ -923,8 +1082,9 @@ async def rss_editor(event, args, client):
         return
     arg, args = get_args(
         "-c",
-        "-exf",
-        "-inf",
+        "-l",
+        "--exf",
+        "--inf",
         "--chat",
         ["-e", "store_true"],
         ["-p", "store_true"],
@@ -936,10 +1096,11 @@ async def rss_editor(event, args, client):
     )
     if not args:
         return await event.reply(f"Please pass the title of the rss item to edit")
-    if not (data := rss_dict.get(args)):
+    if not (data := _bot.rss_dict.get(args)):
         return await event.reply(f"Could not find rss with title - {args}.")
     if not (
         arg.c
+        or arg.l
         or arg.exf
         or arg.inf
         or arg.p
@@ -960,6 +1121,8 @@ async def rss_editor(event, args, client):
         if not arg.c.startswith("/"):
             return await event.reply("'-c': arguement must start with '/'")
         data["command"] = arg.c
+    if arg.l:
+        data["link"] = arg.l
     if arg.chat:
         data["chat"] = int(arg.chat) if arg.chat.casefold() != "default" else None
     if arg.direct and arg.nodirect:
@@ -992,7 +1155,7 @@ async def rss_editor(event, args, client):
         elif not scheduler.running:
             schedule_rss()
             scheduler.start()
-    await save2db2(rss_dict, "rss")
+    await save2db2(_bot.rss_dict, "rss")
     await event.reply(
         f"Edited rss configurations for rss feed with title - `{args}` successfully!"
     )
@@ -1011,11 +1174,11 @@ async def del_rss(event, args, client):
     """
     if not user_is_owner(event.sender_id):
         return
-    if not rss_dict.get(args):
+    if not _bot.rss_dict.get(args):
         return await event.reply(f"'{args}' not found in list of subscribed rss feeds!")
-    rss_dict.pop(args)
+    _bot.rss_dict.pop(args)
     msg = f"Succesfully removed '{args}' from subscribed feeds!"
-    await save2db2(rss_dict, "rss")
+    await save2db2(_bot.rss_dict, "rss")
     await event.reply(msg)
     await logger(e=msg)
 
@@ -1027,8 +1190,8 @@ async def rss_sub(event, args, client):
         Args:
             -t (TITLE): New Title of the subscribed rss feed [Required]
             -c (/command): command to prefix the rss link [Required]
-            -exf (what_to_exclude): keyword of words to fiter out*
-            -inf (what_to_include): keywords to include*
+            --exf (what_to_exclude): keyword of words to fiter out*
+            --inf (what_to_include): keywords to include*
             -p () to pause the rss feed
             -r () to resume the rss feed
             --chat (chat_id) chat to send feeds
@@ -1049,8 +1212,8 @@ async def rss_sub(event, args, client):
     arg, args = get_args(
         "-c",
         "-t",
-        "-exf",
-        "-inf",
+        "--exf",
+        "--inf",
         "--chat",
         ["--direct", "store_true"],
         ["--nodirect", "store_true"],
@@ -1072,7 +1235,7 @@ async def rss_sub(event, args, client):
         )
     if arg.direct and arg.nodirect:
         await avoid_flood(event.reply, "**Warning:** Ignoring '--direct'")
-    if rss_dict.get(title):
+    if _bot.rss_dict.get(title):
         return await avoid_flood(
             event.reply,
             f"This title **{title}** has already been subscribed!. **Please choose another title!**",
@@ -1115,7 +1278,7 @@ async def rss_sub(event, args, client):
         msg += f"\n<b>Filters:-</b>\ninf: <code>{arg.inf}</code>\nexf: <code>{arg.exf}<code/>"
         msg += f"\n<b>Paused:- </b><code>{arg.p}</code>"
         async with rss_dict_lock:
-            rss_dict[title] = {
+            _bot.rss_dict[title] = {
                 "link": feed_link,
                 "last_feed": last_link,
                 "last_title": last_title,
@@ -1144,7 +1307,7 @@ async def rss_sub(event, args, client):
     except Exception as e:
         await logger(Exception)
         return await avoid_flood(event.reply, str(e))
-    await save2db2(rss_dict, "rss")
+    await save2db2(_bot.rss_dict, "rss")
     if msg:
         await avoid_flood(event.reply, msg, parse_mode="html")
     if arg.p:

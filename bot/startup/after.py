@@ -1,6 +1,7 @@
 from bot.config import _bot, conf
 from bot.fun.emojis import enmoji, enmoji2
 from bot.fun.quips import enquip, enquip2
+from bot.utils.bot_utils import encode_job as ejob
 from bot.utils.log_utils import logger
 from bot.workers.auto.status import autostat
 from bot.workers.auto.transcode import something
@@ -111,7 +112,6 @@ async def on_termination():
 
 
 async def on_startup():
-    # if not STARTUP:
     try:
         asyncio.create_task(autostat())
         asyncio.create_task(start_rpc())
@@ -128,9 +128,9 @@ async def on_startup():
             await asyncio.sleep(1)
             await onstart()
         await entime.start()
+        ejob.reset(force=True)
         await asyncio.sleep(30)
         asyncio.create_task(something())
     except Exception:
         logger(Exception)
     _bot.started = True
-    # STARTUP.append(1)

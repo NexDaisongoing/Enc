@@ -20,6 +20,7 @@ from decouple import config
 class Config:
     def __init__(self):
         try:
+            self.ADL_TIMEOUT = config("ARIA2_DL_TIMEOUT", default=0, cast=int)
             self.ALWAYS_DEPLOY_LATEST = config(
                 "ALWAYS_DEPLOY_LATEST", default=False, cast=bool
             )
@@ -34,6 +35,8 @@ class Config:
             self.CAP_DECO = config("CAP_DECO", default="◉")
             self.C_LINK = config("C_LINK", default="@ANi_MiNE")
             self.CMD_SUFFIX = config("CMD_SUFFIX", default=str())
+            self.COMP_MODE = config("COMPATIBILITY_MODE", default=True, cast=bool)
+            self.CUSTOM_RENAME = config("CUSTOM_RENAME", default=None)
             self.DATABASE_URL = config("DATABASE_URL", default=None)
             self.DBNAME = config("DBNAME", default="ENC")
             self.DEV = config("DEV", default=0, cast=int)
@@ -51,6 +54,10 @@ class Config:
                 "FFMPEG",
                 default='ffmpeg -i "{}" -preset ultrafast -c:v libx265 -crf 27 -map 0:v -c:a aac -map 0:a -c:s copy -map 0:s? "{}"',
             )
+            self.FFMPEG2 = config("FFMPEG2", default=None)
+            self.FFMPEG3 = config("FFMPEG3", default=None)
+            self.FFMPEG4 = config("FFMPEG4", default=None)
+            self.FINISHED_PROGRESS_STR = config("FINISHED_PROGRESS_STR", default="🧡")
             self.FL_CAP = config("FILENAME_AS_CAPTION", default=False, cast=bool)
             self.FS_THRESHOLD = config("FLOOD_SLEEP_THRESHOLD", default=600, cast=int)
             self.FSTICKER = config("FSTICKER", default=None)
@@ -64,12 +71,18 @@ class Config:
             self.OVR = config("OVR", default=None)
             self.OWNER = config("OWNER")
             self.PAUSE_ON_DL_INFO = config("PODI", default=True, cast=bool)
+            self.QDL_TIMEOUT = config("QBIT_DL_TIMEOUT", default=0, cast=int)
             self.QBIT_PORT = config("QBIT_PORT", default=8090, cast=int)
             self.QBIT_TIMEOUT = config("QBIT_TIMEOUT", default=20, cast=int)
+            self.RELEASER = config("RELEASER", default="A-M|ANi-MiNE")
+            self.REPORT_FAILED = config("REPORT_FAILED", default=True, cast=bool)
+            self.REPORT_FAILED_DL = config("REPORT_FAILED_DL", default=False, cast=bool)
+            self.REPORT_FAILED_ENC = config(
+                "REPORT_FAILED_ENC", default=False, cast=bool
+            )
             self.RSS_CHAT = config("RSS_CHAT", default=0, cast=int)
             self.RSS_DELAY = config("RSS_DELAY", default=60, cast=int)
             self.RSS_DIRECT = config("RSS_DIRECT", default=True, cast=bool)
-            self.RELEASER = config("RELEASER", default="A-M|ANi-MiNE")
             self.TELEGRAPH_API = config(
                 "TELEGRAPH_API", default="https://api.telegra.ph"
             )
@@ -78,33 +91,55 @@ class Config:
             self.TG_DL_CLIENT = config("TG_DL_CLIENT", default="pyrogram")
             self.TG_UL_CLIENT = config("TG_UL_CLIENT", default="pyrogram")
             self.THUMB = config("THUMBNAIL", default=None)
+            self.UN_FINISHED_PROGRESS_STR = config(
+                "UN_FINISHED_PROGRESS_STR", default="🤍"
+            )
+            self.UAV = config("UPLOAD_AS_VIDEO", default=False, cast=bool)
             self.USE_ANILIST = config("USE_ANILIST", default=True, cast=bool)
             self.USE_CAPTION = config("USE_CAPTION", default=True, cast=bool)
+            self.UVS = config("UPLOAD_VIDEO_AS_SPOILER", default=False, cast=bool)
             self.WORKERS = config("WORKERS", default=2, cast=int)
         except Exception:
             print("Environment vars Missing; or")
-            print("something went wrong")
+            print("Something went wrong:")
             print(traceback.format_exc())
             exit()
 
 
 class Runtime_Config:
-    # will slowly replace the Var_list class in utils.bot_utils
     def __init__(self):
         self.aria2 = None
+        self.batch_ing = []
+        self.batch_queue = {}
+        self.cached = False
         self.cached_dl = False
-        self.display_additional_dl_info = True
+        self.custom_rename = None
+        self.display_additional_dl_info = False
         self.docker_deployed = False
-        self.rss_ran_once = False
+        self.e_cancel = {}
         self.group_enc = False
+        self.groupenc = []
+        self.max_message_length = 4096
         self.only_owner_pm = False
         self.pause_status = 0
-        self.paused = False
+        self.paused = []
+        self.preview_batch = {}
+        self.preview_list = []
+        self.queue = {}
+        self.queue_status = []
+        self.r_queue = []
         self.repo_branch = None
+        self.report_failed_dl = False
+        self.report_failed_enc = False
+        self.rss_dict = {}
+        self.rss_ran_once = False
         self.sas = False
         self.sqs = False
         self.started = False
+        self.temp_only_in_group = False
         self.temp_users = []
+        self.u_cancel = []
+        self.version2 = []
 
 
 conf = Config()

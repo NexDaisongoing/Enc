@@ -9,14 +9,9 @@ from pyrogram.handlers import CallbackQueryHandler
 from bot import asyncio, botStartTime, pyro, time
 from bot.utils.ani_utils import qparse
 from bot.utils.batch_utils import get_batch_list
-from bot.utils.bot_utils import (
-    decode,
-    enc_canceller,
-    get_queue,
-    hbs,
-    time_formatter,
-    u_cancelled,
-)
+from bot.utils.bot_utils import decode, enc_canceller
+from bot.utils.bot_utils import encode_job as ejob
+from bot.utils.bot_utils import get_queue, hbs, time_formatter, u_cancelled
 from bot.utils.log_utils import logger
 from bot.utils.msg_utils import clean_old_message, turn, user_is_owner
 from bot.utils.os_utils import file_exists, s_remove
@@ -28,18 +23,18 @@ async def get_next(length, queue):
     try:
         if length > 1:
             file_name, _id, v_f = list(queue.values())[1]
-            v, f, m = v_f
+            v, f, m, n, au = v_f
             next_ = (
-                await qparse(file_name, v, f)
+                await qparse(file_name, v, f, n, au[0])
                 if m[1].lower() != "batch."
                 else "[Batch]: " + file_name
             )
             next_ = (next_[:45] + "…") if len(next_) > 45 else next_
             if length > 2:
                 file_name, _id, v_f = list(queue.values())[2]
-                v, f, m = v_f
+                v, f, m, n, au = v_f
                 next2_ = "\n" + (
-                    await qparse(file_name, v, f)
+                    await qparse(file_name, v, f, n, au[0])
                     if m[1].lower() != "batch."
                     else "[Batch]: " + file_name
                 )
@@ -71,7 +66,7 @@ async def pres(e):
         if file_exists("thumb2.jpg"):
             ansa += "\n\nAnilist thumbnail:\nYes"
         file_name, _id, v_f = list(queue.values())[0]
-        v, f, m = v_f
+        v, f, m, n, au = v_f
         if m[1].lower() == "batch.":
             _dir, name_ = os.path.split(dl)
             nxt_, left = await get_batch_list(
@@ -101,7 +96,7 @@ async def pres(e):
         )
 
 
-async def skip(e):
+async def skip(e, skip_jobs=False):
     _id = f"{e.chat_id}:{e.message_id}"
     req_info = decode(_id)
     if not req_info:
@@ -116,14 +111,25 @@ async def skip(e):
         await e.delete()
         return u_cancelled().append(_id)
     ans = "Cancelling encoding please wait…"
+
+    if skip_jobs:
+        ans = "Cancelling encoding and all pending jobs, please wait…"
+        if not ejob.id == _id:
+            return await clean_old_message(e)
+        ejob.complete()
+
     await e.answer(ans)
     process.kill()
     # await e.delete()
-    s_remove(dl)
+    # s_remove(dl)
     s_remove(en)
     enc_canceller().update({_id: e.query.user_id})
 
     return
+
+
+async def skip_jobs(e):
+    return await skip(e, skip_jobs=True)
 
 
 async def stats(e):
@@ -190,8 +196,8 @@ async def dl_stat(client, query):
         file_name = (os.path.split(d.file_name))[1]
         ov = hbs(int(Path(dls).stat().st_size))
         queue = get_queue()
-        ver, fil, mode = (list(queue.values())[0])[2]
-        q = await qparse(file_name, ver, fil)
+        ver, fil, mode, n, au = (list(queue.values())[0])[2]
+        q = await qparse(file_name, ver, fil, n, au[0])
         ans = f"➡️:\n{q}"
         ans += "\n\n"
         ans += f'{"Current " if not d.uri else str()}Size:\n{ov}'

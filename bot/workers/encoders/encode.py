@@ -5,9 +5,11 @@ from bot import Button
 from bot.config import conf
 from bot.fun.emojis import enmoji
 from bot.utils.bot_utils import code, decode
+from bot.utils.bot_utils import encode_job as ejob
+from bot.utils.bot_utils import get_codec
 from bot.utils.log_utils import logger
 
-def_enc_msg = "**Currently Encoding {}:**\n└`{}`\n\n**⏳This Might Take A While⏳**"
+def_enc_msg = "**Currently Encoding {}:**\n└`{}`\n\n{}**⏳This Might Take A While⏳**"
 
 
 class Encoder:
@@ -39,22 +41,33 @@ class Encoder:
             code(self.process, dl, en, user, stime, self.enc_id)
             out = (os.path.split(en))[1]
             wah = 0
+            a_msg = (
+                f"**{ejob.get_pending_pos()} Job**\n└`{(await get_codec(ejob.pending()))}`\n\n"
+                if ejob.get_pending_pos()
+                else str()
+            )
+            c_button = [Button.inline("Cancel", data=f"skip{wah}")]
+            (
+                c_button.append(Button.inline("❌ all jobs", data=f"jskip{wah}"))
+                if ejob.jobs() > 1
+                else None
+            )
             e_msg = await event.edit(
-                text.format(enmoji(), out),
+                text.format(enmoji(), out, a_msg),
                 buttons=[
                     [Button.inline("ℹ️", data=f"pres{wah}")],
                     [
                         Button.inline("Progress", data=f"stats0"),
                         Button.inline("Server-info", data=f"stats1"),
                     ],
-                    [Button.inline("Cancel", data=f"skip{wah}")],
+                    c_button,
                 ],
             )
             if self.log_msg and self.sender:
                 code(self.process, dl, en, user, stime, self.log_enc_id)
                 sau = (os.path.split(dl))[1]
                 e_log = await self.log_msg.edit(
-                    f"**User:**\n└[{self.sender.first_name}](tg://user?id={user})\n\n**Currently Encoding:**\n└`{out}`\n\n**Source File:**\n└`{sau}`",
+                    f"**User:**\n└[{self.sender.first_name}](tg://user?id={user})\n\n{a_msg}**Currently Encoding:**\n└`{out}`\n\n**Source File:**\n└`{sau}`",
                     buttons=[
                         [Button.inline("ℹ️", data=f"pres{wah}")],
                         [Button.inline("CHECK PROGRESS", data=f"stats2")],

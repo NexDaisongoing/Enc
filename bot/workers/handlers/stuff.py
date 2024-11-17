@@ -76,6 +76,7 @@ async def status(event, args, client):
         f"**Version:** `{vercheck}`\n"
         f"**Branch:** `{branch}`\n"
         f"**Commit Date:** `{last_commit}`\n\n"
+        f"**Docker:** `{'Yes' if _bot.docker_deployed else 'No'}`\n"
         f"**Bot Uptime:** `{currentTime}`\n"
         f"**System Uptime:** `{ostime}`\n\n"
         f"**Total Disk Space:** `{total}`\n"
@@ -305,6 +306,7 @@ v{s} - turn v2,3,4… on (with message) or off
 download{s} - download a file or link to bot
 upload{s} - upload from a local directory or link
 rename{s} - rename a video file/link
+m{s} - get the media info of a replied file/link
 mux{s} - remux a file
 get{s} - get current ffmpeg code
 set{s} - set custom ffmpeg code
@@ -320,6 +322,7 @@ anime{s} - get anime info
 name{s} - quick filter with anime_title
 vname{s} - get list of name filter
 delname{s} - delete name filter
+setrename{s} - set custom_rename format
 rss{s} - edit, delete & subscribe rss feeds
 status{s} - 🆕 get bot's status
 showthumb{s} - 🖼️ show current thumbnail

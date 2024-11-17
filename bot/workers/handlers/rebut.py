@@ -46,6 +46,7 @@ from bot.utils.os_utils import (
     check_ext,
     dir_exists,
     file_exists,
+    info,
     pos_in_stm,
     read_n_to_last_line,
     s_remove,
@@ -177,6 +178,66 @@ async def en_download(event, args, client):
         await logger(Exception)
 
 
+async def getminfo(event, args, client):
+    """
+    Downloads the replied message and gets its media info.
+    Available arguments:
+        -c: to treat caption as filename
+        -f or --full: To get a more verbose media info
+        text: Treat text as filename
+    """
+    if not user_is_allowed(event.sender_id):
+        return await event.delete()
+    if not event.is_reply:
+        return await event.reply("`Reply to a file or link to get the media info`")
+    try:
+        _dir = f"minfo/{event.chat_id}:{event.id}/"
+        download = None
+        full = None
+        loc = None
+        link = None
+        rep_event = await event.get_reply_message()
+        message = await client.get_messages(event.chat_id, int(rep_event.id))
+        if message.text and not (is_url(message.text) or is_magnet(message.text)):
+            return await message.reply("`Not a valid link`")
+        e = await message.reply(f"{enmoji()} `Downloading…`", quote=True)
+        if args:
+            arg, args = get_args(
+                ["-c", "store_true"],
+                ["-f", "store_true"],
+                ["--full", "store_true"],
+                to_parse=args,
+                get_unknown=True,
+            )
+            if arg.c and not message.text:
+                loc = message.caption
+            elif args:
+                loc = args
+            full = arg.f or arg.full
+        link = message.text if message.text else link
+        if not loc:
+            loc = rep_event.file.name if not link else link
+        await try_delete(event)
+        d_id = f"{e.chat.id}:{e.id}"
+        download = downloader(_id=d_id, uri=link, folder=_dir)
+        downloaded = await download.start(loc, 0, message, e)
+        if download.is_cancelled or download.download_error:
+            return await report_failed_download(
+                download, e, download.file_name, event.sender_id
+            )
+        f_loc = _dir + download.file_name
+        await e.edit(f"__Generating media info for__ `{f_loc}` __…__")
+        m_info = await info(f_loc, full)
+        if not m_info:
+            return await e.edit(f"__Generating media info for__ `{f_loc}` __failed!__")
+        await e.edit(f"Mediainfo for: **[{download.file_name}]({m_info})**")
+    except Exception:
+        await logger(Exception)
+    finally:
+        if download and downloaded:
+            await download.clean_download()
+
+
 async def en_rename(event, args, client):
     """
     Reply to a file/link to download,rename and upload it.
@@ -188,6 +249,7 @@ async def en_rename(event, args, client):
     -tc {caption type} specify type in caption
     -tf {file tag} specify file language tag.
     -v {int} specify a number for versionimg
+    --force force rename a file to a specified filename and file type.
 
     To define file name send any of the below as arguments:
     "file_name" > str - custom name to rename to (if parsing is enabled this is parsed too)
@@ -204,7 +266,7 @@ async def en_rename(event, args, client):
         link = None
         _parse = True
         work_folder = "temp/"
-        _em = _q = _tc = _tf = _v = None
+        _em = _forced = _q = _tc = _tf = _v = None
         rep_event = await event.get_reply_message()
         message = await client.get_messages(event.chat_id, int(rep_event.id))
         if message.text and not (is_url(message.text) or is_magnet(message.text)):
@@ -214,6 +276,7 @@ async def en_rename(event, args, client):
         link = message.text if message.text else None
         if args:
             arg, args = get_args(
+                ["--force", "store_true"],
                 ["-np", "store_false"],
                 "-e",
                 "-q",
@@ -223,21 +286,27 @@ async def en_rename(event, args, client):
                 to_parse=args,
                 get_unknown=True,
             )
-            _parse = arg.np
+            _parse = arg.np if not arg.force else False
             _em = arg.e
+            _forced = args if arg.force else None
             _q = arg.q
             _tc = arg.tc
             _tf = arg.tf
             _v = arg.v
         if not args and not link:
             loc = rep_event.file.name
+            if _forced:
+                return await event.reply("**Force rename to what exactly?**")
         elif args == "0" and not link:
             loc = message.caption
+            _forced = loc if _forced else None
         elif not link:
             loc = check_ext(args)
         if not link:
             __loc = loc
-            __out, __none = await parse(loc, anilist=_parse, folder=work_folder)
+            __out, __none = await parse(
+                loc, anilist=_parse, folder=work_folder, direct=_forced
+            )
         else:
             file = await get_leech_name(link)
             if file.error:
@@ -272,6 +341,7 @@ async def en_rename(event, args, client):
             v=_v,
             _filter=_f,
             ccodec=_q,
+            direct=_forced,
         )
         if not __pout == __out:
             await asyncio.sleep(3)
@@ -294,6 +364,7 @@ async def en_rename(event, args, client):
             ver=_v,
             _filter=_f,
             ccodec=_q,
+            direct=_forced,
         )
         upload = uploader(event.sender_id, d_id)
         await upload.start(event.chat_id, loc, e, thumb3, cap, message)
@@ -332,6 +403,7 @@ async def en_mux(event, args, client):
         -default_s {lang_iso3} same as above but for subtitles.
             the probability of this working rests on the source file having a language metadata.
         -ext {ext} force change extension (requires the preceding dot ".")
+        -f set output file name.
         -tc {string} force tag caption
         -tf {string} force tag file
     """
@@ -351,6 +423,7 @@ async def en_mux(event, args, client):
         default_sub = None
         download = download2 = None
         flags = None
+        forced_file = None
         input_2 = None
         link = qb = select = None
         ver = None
@@ -381,6 +454,7 @@ async def en_mux(event, args, client):
                 "-default_a",
                 "-default_s",
                 "-ext",
+                "-f",
                 "-i",
                 ["-np", "store_true"],
                 "-q",
@@ -423,7 +497,7 @@ async def en_mux(event, args, client):
                 if not flag.du.lstrip("-").isdigit():
                     return await event.reply("'-du': chat_id is not a valid number.")
                 flag.du = int(flag.du)
-            if flag.np:
+            if flag.np or flag.f:
                 ani_parse = False
             if flag.i and (is_url(flag.i) or is_magnet(flag.i)):
                 link2 = None
@@ -453,6 +527,7 @@ async def en_mux(event, args, client):
             codec = flag.q
             default_audio = flag.default_a
             default_sub = flag.default_s
+            forced_file = flag.f
             file_tag = flag.tf
             force_ext = flag.ext
             ver = flag.v
@@ -520,6 +595,7 @@ async def en_mux(event, args, client):
             folder=work_folder,
             _filter=_f,
             ccodec=codec,
+            direct=forced_file,
         )
         loc = work_folder + __out
         b, d, c, rlsgrp = await dynamicthumb(
@@ -529,7 +605,7 @@ async def en_mux(event, args, client):
         for arg in args.split("-"):
             if "metadata" in arg:
                 args2 += "-" + arg + " "
-        if "This Episode" in args2:
+        if "This Episode" in args2 and b:
             bo = b
             if d:
                 bo = f"Episode {d} of {b}"
@@ -569,6 +645,7 @@ async def en_mux(event, args, client):
             ver=ver,
             _filter=_f,
             ccodec=codec,
+            direct=forced_file,
         )
         await e.delete()
         await asyncio.sleep(5)
@@ -745,6 +822,7 @@ async def en_upload(event, args, client):
                             u_id = f"{ul.chat.id}:{ul.id}"
                             await asyncio.sleep(10)
                             upload = uploader(_id=u_id)
+                            upload.force_up_as_files = True
                             d_msg = await upload.start(
                                 event.chat_id,
                                 file,

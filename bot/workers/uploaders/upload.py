@@ -1,10 +1,9 @@
 from bot import *
 from bot.config import conf
 from bot.fun.emojis import enhearts, enmoji, enmoji2
-from bot.utils.bot_utils import UN_FINISHED_PROGRESS_STR as unfin_str
 from bot.utils.bot_utils import code, decode, hbs, time_formatter
 from bot.utils.log_utils import logger
-from bot.utils.os_utils import file_exists
+from bot.utils.os_utils import file_exists, get_video_thumbnail
 
 
 class Uploader:
@@ -14,12 +13,14 @@ class Uploader:
         self.is_cancelled = False
         self.id = _id
         self.canceller = None
+        self.force_up_as_files = False
         self.time = None
+        self.unfin_str = conf.UN_FINISHED_PROGRESS_STR
 
     def __str__(self):
         return "#wip"
 
-    async def start(self, from_user_id, filepath, reply, thum, caption, message=""):
+    async def start(self, from_user_id, filepath, reply, thum, caption, message):
         try:
             if not thum or not (thum and file_exists(thum)):
                 if not file_exists(thumb):
@@ -29,6 +30,11 @@ class Uploader:
             code(self, index=self.id)
             fm = f"**From folder:** `{os.path.split(filepath)[0]}`"
             fm += f"\n**File:** `{os.path.split(filepath)[1]}`"
+            if conf.UAV and not self.force_up_as_files:
+                s = await self.upload_video(
+                    caption, filepath, fm, from_user_id, message, reply, thum
+                )
+                return s
             async with tele.action(from_user_id, "file"):
                 await reply.edit("🔺Uploading🔺")
                 self.time = u_start = time.time()
@@ -67,6 +73,33 @@ class Uploader:
             decode(self.id, pop=True)
             await logger(Exception)
 
+    async def upload_video(
+        self, caption, filepath, fm, from_user_id, message, reply, thum
+    ):
+        thum = "thumb2.jpg" if not thum or thum == thumb else thum
+        thum = await get_video_thumbnail(filepath, thum)
+        async with tele.action(from_user_id, "file"):
+            await reply.edit("🔺Uploading🔺")
+            self.time = u_start = time.time()
+            s = await message.reply_video(
+                video=filepath,
+                quote=True,
+                thumb=thum,
+                caption=caption,
+                has_spoiler=conf.UVS,
+                supports_streaming=True,
+                progress=self.progress_for_pyrogram,
+                progress_args=(
+                    pyro,
+                    f"**{conf.CAP_DECO} Uploading…**",
+                    reply,
+                    u_start,
+                    fm,
+                ),
+            )
+        decode(self.id, pop=True)
+        return s
+
     async def progress_for_pyrogram(
         self, current, total, app, ud_type, message, start, file_info
     ):
@@ -89,7 +122,9 @@ class Uploader:
 
             progress = "```\n{0}{1}```\n{2}\n<b>Progress:</b> `{3}%`\n".format(
                 "".join([fin_str for i in range(math.floor(percentage / 10))]),
-                "".join([unfin_str for i in range(10 - math.floor(percentage / 10))]),
+                "".join(
+                    [self.unfin_str for i in range(10 - math.floor(percentage / 10))]
+                ),
                 file_info,
                 round(percentage, 2),
             )

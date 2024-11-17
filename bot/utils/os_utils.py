@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import sys
+from os import cpu_count
 from pathlib import Path
 from subprocess import run as bashrun
 
@@ -34,10 +35,10 @@ async def is_running(proc):
     return proc.returncode is None
 
 
-async def info(file):
+async def info(file, full=False):
     try:
         out = await sync_to_async(
-            pymediainfo.MediaInfo.parse, file, output="HTML", full=False
+            pymediainfo.MediaInfo.parse, file, output="HTML", full=full
         )
         if len(out) > 65536:
             out = (
@@ -112,7 +113,7 @@ async def qclean():
         os.system("rm -rf downloads2/*")
         os.system("rm -rf encode/*")
         os.system("rm -rf mux/*")
-        os.system("rm thumb/*")
+        os.system("rm minfo/*")
         try:
             with open(ffmpeg_file, "r") as file:
                 ffmpeg = file.read().rstrip().split()[0]
@@ -163,6 +164,40 @@ def read_n_to_last_line(filename, n=1):
             f.seek(0)
         last_line = f.readline().decode()
     return last_line
+
+
+async def get_stream_duration(file):
+    if not Path(file).is_file():
+        return
+    result = 0
+    try:
+        out = await enshell(
+            f'ffprobe -hide_banner -show_streams -show_format -print_format json """{file}"""'
+        )
+        details = json.loads(out[1])
+        result = round(float(details.get("format").get("duration")))
+    except Exception:
+        await logger(Exception)
+    finally:
+        return result
+
+
+async def get_video_thumbnail(file, output="thumb2.jpg"):
+    try:
+        duration = await get_stream_duration(file)
+        if not duration:
+            return
+        if duration == 0:
+            duration = 3
+        duration = duration // 2
+        out = await enshell(
+            f'ffmpeg -hide_banner -loglevel error -ss {duration} -i """{file}""" -vf thumbnail -q:v 1 -frames:v 1 -threads {cpu_count() // 2} {output} -y'
+        )
+        if not file_exists(output):
+            return None
+        return output
+    except Exception:
+        await logger(Exception)
 
 
 async def get_stream_info(file):

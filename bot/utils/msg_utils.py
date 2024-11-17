@@ -3,23 +3,20 @@ from functools import partial
 import pyrogram
 
 from bot import *
-from bot.config import conf
+from bot.config import _bot, conf
 from bot.fun.emojis import enmoji, enmoji2
 from bot.fun.quips import enquip3
 from bot.fun.quotes import enquotes
 from bot.others.exceptions import ArgumentParserError
 
-from .bot_utils import gfn, is_url, sync_to_async, var
+from .bot_utils import gfn, is_url, sync_to_async
 from .log_utils import log, logger
 from .os_utils import s_remove
-
-attrs = dir(var)
-globals().update({n: getattr(var, n) for n in attrs if not n.startswith("_")})
 
 
 def user_is_allowed(user: str | int):
     user = str(user)
-    return user in conf.OWNER or user in TEMP_USERS
+    return user in conf.OWNER or user in _bot.temp_users
 
 
 def user_is_owner(user: str | int):
@@ -36,18 +33,18 @@ def pm_is_allowed(in_group=False, in_pm=False):
     if in_pm:
         return not conf.NO_TEMP_PM
     if in_group:
-        return TEMP_ONLY_IN_GROUP
+        return _bot.temp_only_in_group
 
 
 def temp_is_allowed(user: str | int):
     user = str(user)
-    return user in TEMP_USERS
+    return user in _bot.temp_users
 
 
 def turn(turn_id: str = None):
     if turn_id:
-        return turn_id in R_QUEUE
-    return R_QUEUE
+        return turn_id in _bot.r_queue
+    return _bot.r_queue
 
 
 async def wait_for_turn(turn_id: str, msg):
@@ -58,7 +55,7 @@ async def wait_for_turn(turn_id: str, msg):
     await msg.edit_reply_markup(reply_markup=reply_markup)
     while turn(turn_id):
         await asyncio.sleep(5)
-        if R_QUEUE[0] == turn_id:
+        if _bot.r_queue[0] == turn_id:
             await msg.delete()
             return 1
 
@@ -114,7 +111,8 @@ async def get_cached(dl: str, sender, user: int, e, op):
                 except errors.FloodWaitError as e:
                     await asyncio.sleep(e.seconds)
                     continue
-        CACHE_QUEUE.clear()
+        # CACHE_QUEUE.clear()
+        _bot.cached = False
         if not dl_check.is_file():
             raise Exception("Getting cached file failed\nfile might have been deleted.")
         return True
@@ -123,7 +121,8 @@ async def get_cached(dl: str, sender, user: int, e, op):
         await e.edit("`Using cached download failed\nRe-downloading…`")
         if op:
             await op.edit("`Using cached download failed\nRe-downloading…`")
-        CACHE_QUEUE.clear()
+        # CACHE_QUEUE.clear()
+        _bot.cached = False
         return False
 
 
@@ -141,7 +140,7 @@ async def enpause(message):
     pause_msg = (
         " `Bot has been paused to continue, unpause bot using the /pause command`"
     )
-    while PAUSEFILE:
+    while _bot.paused:
         try:
             await message.edit(enmoji() + pause_msg)
             await asyncio.sleep(10)
@@ -280,7 +279,7 @@ async def bc_msg(text, except_user=None, mlist=[]):
         except Exception:
             log(Exception)
 
-    for u in TEMP_USERS:
+    for u in _bot.temp_users:
         if except_user == (u := int(u)):
             continue
         try:
@@ -320,17 +319,18 @@ async def report_encode_status(
         await msg_2_delete.delete()
     cancelled = None
     log_id = None
+    reportee = None
     if log_msg:
         log_id = f"{log_msg.chat_id}:{log_msg.id}"
     if process.returncode != 0:
         reply = f"{_is} "
         if file:
             reply += f"of `{file}` "
-        if E_CANCEL.get(_id) or (log_id and E_CANCEL.get(log_id)):
+        if _bot.e_cancel.get(_id) or (log_id and _bot.e_cancel.get(log_id)):
             cancelled = True
             reply += f"was cancelled. ❌"
-            who_cancel = E_CANCEL.get(_id)
-            who_cancel = E_CANCEL.get(log_id) if not who_cancel else who_cancel
+            who_cancel = _bot.e_cancel.get(_id)
+            who_cancel = _bot.e_cancel.get(log_id) if not who_cancel else who_cancel
             if who_cancel != user:
                 canceller = await pyro.get_users(who_cancel)
                 if not pyro_msg:
@@ -341,8 +341,15 @@ async def report_encode_status(
                     reply += f"by {canceller.mention()}."
         else:
             reply += f"Failed. {enmoji2()}\nLogs available below."
+            if _bot.report_failed_enc and user:
+                reportee = int(conf.OWNER.split()[0])
+                chat = msg.chat_id if not pyro_msg else msg.chat.id
+                if reportee == int(chat):
+                    reportee = None
 
         reply += "!"
+        if reportee:
+            report = await tele.send_message(reportee, reply)
         if not pyro_msg:
             await msg.edit(reply, buttons=None)
         else:
@@ -372,6 +379,8 @@ async def report_encode_status(
             log(er)
         if error and log_msg:
             await log_msg.reply(error)
+        if error and reportee:
+            await report.reply(error)
     else:
         reply = f"**{_is}** "
         if file:
@@ -384,6 +393,7 @@ async def report_encode_status(
 
 
 async def report_failed_download(download, msg, file, user=None):
+    pyro_msg = True if isinstance(msg, pyrogram.types.Message) else False
     reply = f"Download of `{file}` "
     if download.is_cancelled:
         reply += "was cancelled."
@@ -391,13 +401,18 @@ async def report_failed_download(download, msg, file, user=None):
             not user or (user and download.canceller.id != user)
         ):
             reply += " by "
-            if not isinstance(msg, pyrogram.types.Message):
+            if not pyro_msg:
                 reply += f"[{download.canceller.first_name}](tg://user?id={user})"
             else:
                 reply += download.canceller.mention()
     else:
         reply += f"failed.\n- `{download.download_error}`"
     reply += "!"
+    if not download.is_cancelled and user and _bot.report_failed_dl:
+        reportee = int(conf.OWNER.split()[0])
+        chat = msg.chat_id if not pyro_msg else msg.chat.id
+        if not reportee == int(chat):
+            await tele.send_message(reportee, reply)
     return await msg.edit(reply)
 
 

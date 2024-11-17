@@ -1,9 +1,8 @@
 import uuid
 
 from bot import asyncio, math, os, pyro, qbClient, time
-from bot.config import conf
+from bot.config import _bot, conf
 from bot.utils.bot_utils import (
-    CACHE_QUEUE,
     Qbit_c,
     get_aria2,
     get_queue,
@@ -198,9 +197,12 @@ async def get_torrent(url):
         return qinfo
 
 
-async def cache_dl(check=False):
+async def cache_dl(check=False, cached=False):
     if check:
-        return True if CACHE_QUEUE else False
+        return _bot.cached
+    if cached:
+        _bot.cached = True
+        return
     try:
         queue = get_queue()
         chat_id, msg_id = list(queue.keys())[1]
@@ -219,10 +221,10 @@ async def cache_dl(check=False):
         else:
             file = msg.document.file_id
         await download2(dl, file)
-        CACHE_QUEUE.append(1)
+        _bot.cached = True
     except Exception:
         await logger(Exception)
-        CACHE_QUEUE.clear()
+        _bot.cached = False
 
 
 async def progress_for_pyrogram(current, total, bot, ud_type, message, start):
@@ -241,11 +243,11 @@ async def progress_for_pyrogram(current, total, bot, ud_type, message, start):
         time_to_completion = time_formatter(int((total - current) / speed))
         progress = "{0}{1} \n<b>Progress:</b> {2}%\n".format(
             "".join(
-                [FINISHED_PROGRESS_STR for i in range(math.floor(percentage / 10))]
+                [conf.FINISHED_PROGRESS_STR for i in range(math.floor(percentage / 10))]
             ),
             "".join(
                 [
-                    UN_FINISHED_PROGRESS_STR
+                    conf.UN_FINISHED_PROGRESS_STR
                     for i in range(10 - math.floor(percentage / 10))
                 ]
             ),

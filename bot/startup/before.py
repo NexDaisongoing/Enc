@@ -4,12 +4,9 @@ from pymongo import MongoClient
 
 from bot import *
 from bot.config import _bot, conf
-from bot.utils.bot_utils import create_api_token, var
+from bot.utils.bot_utils import create_api_token
 from bot.utils.local_db_utils import load_local_db
 from bot.utils.os_utils import file_exists
-
-attrs = dir(var)
-globals().update({n: getattr(var, n) for n in attrs if not n.startswith("_")})
 
 uptime = dt.now()
 
@@ -24,21 +21,51 @@ if file_exists(version_file):
 
 LOGS.info(f"Branch: {_bot.repo_branch or 'Unknown!'}")
 LOGS.info(vmsg)
+
+if os.path.isdir("/tgenc"):
+    _bot.docker_deployed = True
+    LOGS.info("Docker: Yes")
+
 LOGS.info("=" * 30)
 
 if conf.THUMB:
     os.system(f"wget {conf.THUMB} -O thumb.jpg")
 
+if conf.CUSTOM_RENAME:
+    _bot.custom_rename = conf.CUSTOM_RENAME
+
 if conf.DL_STUFF:
     for link in conf.DL_STUFF.split(","):
         os.system(f"wget {link.strip()}")
 
-if conf.DL_STUFF:
-    TEMP_ONLY_IN_GROUP.append(1)
+if conf.NO_TEMP_PM:
+    _bot.temp_only_in_group = True
+
+if conf.REPORT_FAILED:
+    _bot.report_failed_dl = True
+    _bot.report_failed_enc = True
+
+if conf.REPORT_FAILED_DL:
+    _bot.report_failed_dl = True
+
+if conf.REPORT_FAILED_ENC:
+    _bot.report_failed_enc = True
 
 if not file_exists(ffmpeg_file):
     with open(ffmpeg_file, "w") as file:
         file.write(str(conf.FFMPEG) + "\n")
+
+if not file_exists(ffmpeg_file2) and conf.FFMPEG2:
+    with open(ffmpeg_file2, "w") as file:
+        file.write(str(conf.FFMPEG2) + "\n")
+
+if not file_exists(ffmpeg_file3) and conf.FFMPEG3:
+    with open(ffmpeg_file3, "w") as file:
+        file.write(str(conf.FFMPEG3) + "\n")
+
+if not file_exists(ffmpeg_file4) and conf.FFMPEG4:
+    with open(ffmpeg_file4, "w") as file:
+        file.write(str(conf.FFMPEG4) + "\n")
 
 if not file_exists(mux_file) and conf.MUX_ARGS:
     with open(mux_file, "w") as file:
@@ -60,19 +87,15 @@ if not os.path.isdir("dump/"):
     os.mkdir("dump/")
 if not os.path.isdir("mux/"):
     os.mkdir("mux/")
-if not os.path.isdir("thumb/"):
-    os.mkdir("thumb/")
-
-
-if os.path.isdir("/tgenc"):
-    DOCKER_DEPLOYMENT.append(1)
+if not os.path.isdir("minfo/"):
+    os.mkdir("minfo/")
 
 if conf.TEMP_USER:
     for t in conf.TEMP_USER.split():
         if t in conf.OWNER.split():
             continue
-        if t not in TEMP_USERS:
-            TEMP_USERS.append(t)
+        if t not in _bot.temp_users:
+            _bot.temp_users.append(t)
 
 
 def load_db(_db, _key, var, var_type=None):
@@ -95,6 +118,8 @@ def load_db(_db, _key, var, var_type=None):
                 var.append(item)
     elif var_type == "dict":
         var.update(out)
+    elif var_type == "cust_r":
+        _bot.custom_rename = out.strip()
     else:
         with open(var, "w") as file:
             file.write(out + "\n")
@@ -109,14 +134,22 @@ if conf.DATABASE_URL:
     rssdb = db["rss"]
     userdb = db["users"]
 
-    load_db(queuedb, "batches", BATCH_QUEUE, "dict")
-    load_db(queuedb, "queue", QUEUE, "dict")
-    load_db(userdb, "t_users", TEMP_USERS, "list")
+    load_db(queuedb, "batches", _bot.batch_queue, "dict")
+    load_db(queuedb, "queue", _bot.queue, "dict")
+    load_db(userdb, "t_users", _bot.temp_users, "list")
     load_db(filterdb, "autoname", rename_file)
+    load_db(filterdb, "cus_rename", None, "cust_r")
     load_db(ffmpegdb, "ffmpeg", ffmpeg_file)
     load_db(filterdb, "filter", filter_file)
     load_db(ffmpegdb, "mux_args", mux_file)
-    load_db(rssdb, "rss", RSS_DICT, "dict")
+    load_db(rssdb, "rss", _bot.rss_dict, "dict")
+    other_ff = [
+        ("ffmpeg2", ffmpeg_file2),
+        ("ffmpeg3", ffmpeg_file3),
+        ("ffmpeg4", ffmpeg_file4),
+    ]
+    for ff in other_ff:
+        load_db(ffmpegdb, ff[0], ff[1])
 
 
 else:
@@ -141,15 +174,15 @@ class EnTimer:
     async def timer(self):
         while True:
             while self.ind_pause or self.time > 0:
-                PAUSEFILE.append(0) if not PAUSEFILE else None
+                _bot.paused.append(0) if not _bot.paused else None
                 await asyncio.sleep(1)
                 print(f"paused for {self.time}")
                 if self.time:
                     self.ind_pause = False
                     self.time = self.time - 1
             await asyncio.sleep(1)
-            if PAUSEFILE and PAUSEFILE[0] == 0:
-                PAUSEFILE.clear()
+            if _bot.paused and _bot.paused[0] == 0:
+                _bot.paused.clear()
             if self.msg and not (self.time or self.ind_pause):
                 try:
                     for msg in self.msg:

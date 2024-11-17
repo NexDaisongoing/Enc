@@ -44,6 +44,7 @@ from html_telegraph_poster import TelegraphPoster
 from html_telegraph_poster import errors as telegraph_errors
 from pyrogram import Client
 from pyrogram import errors as pyro_errors
+from pyrogram import utils as pyro_utils
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from qbittorrentapi import Client as qbClient
 from telethon import Button, TelegramClient, errors, events, functions, types
@@ -57,9 +58,13 @@ bot_id = conf.BOT_TOKEN.split(":", 1)[0]
 botStartTime = time.time()
 caption_file = "NO_CAPTION"
 ffmpeg_file = "ffmpeg.txt"
+ffmpeg_file2 = "ffmpeg2.txt"
+ffmpeg_file3 = "ffmpeg3.txt"
+ffmpeg_file4 = "ffmpeg4.txt"
 mux_file = "mux.txt"
 filter_file = "filter.txt"
 home_dir = os.getcwd()
+local_cdb = ".crf.pkl"
 local_qdb = ".local_queue.pkl"
 local_qdb2 = ".local_bqueue.pkl"
 local_rdb = ".local_rssdb.pkl"
@@ -92,12 +97,14 @@ if conf.TELEGRAPH_AUTHOR and len(conf.TELEGRAPH_AUTHOR.split("|")) > 1:
 if "|" in conf.RELEASER:
     release_name = conf.RELEASER.split("|")[0]
     release_name_b = conf.RELEASER.split("|")[1]
+elif conf.RELEASER.casefold() == "none":
+    release_name = release_name_b = str()
 else:
     release_name = conf.RELEASER
     release_name_b = conf.RELEASER
 
-release_name = f"[{release_name.strip()}]"
-release_name_b = f"[{release_name_b.strip()}]"
+release_name = f"[{release_name.strip()}]" if release_name else str()
+release_name_b = f"[{release_name_b.strip()}]" if release_name_b else str()
 
 
 if os.path.exists(log_file_name):
@@ -134,9 +141,12 @@ cd_pause = "cd_pause"
 dl_pause = "dl_pause"
 id_pause = "id_pause"
 
+# Temp fix for new channels
+pyro_utils.MIN_CHAT_ID = -999999999999
+pyro_utils.MIN_CHANNEL_ID = -100999999999999
 
-if sys.version_info < (3, 8):
-    LOGS.critical("Please use Python 3.8+")
+if sys.version_info < (3, 10):
+    LOGS.critical("Please use Python 3.10+")
     exit(1)
 
 

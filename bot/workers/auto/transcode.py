@@ -2,7 +2,7 @@ from os.path import split as path_split
 from os.path import splitext as split_ext
 from shutil import copy2 as copy_file
 
-from bot import asyncio, ffmpeg_file, mux_file, pyro, tele, time
+from bot import asyncio, mux_file, pyro, tele, time
 from bot.config import conf
 from bot.others.exceptions import AlreadyDl
 from bot.startup.before import entime
@@ -12,9 +12,9 @@ from bot.utils.batch_utils import (
     get_downloadable_batch,
     mark_file_as_done,
 )
-from bot.utils.bot_utils import CACHE_QUEUE as cached
-from bot.utils.bot_utils import E_CANCEL
+from bot.utils.bot_utils import enc_canceller as e_cancel
 from bot.utils.bot_utils import encode_info as einfo
+from bot.utils.bot_utils import encode_job as ejob
 from bot.utils.bot_utils import get_bqueue, get_queue, get_var, hbs
 from bot.utils.bot_utils import time_formatter as tf
 from bot.utils.db_utils import save2db
@@ -22,7 +22,6 @@ from bot.utils.log_utils import logger
 from bot.utils.msg_utils import (
     bc_msg,
     enpause,
-    get_args,
     get_cached,
     reply_message,
     report_encode_status,
@@ -73,20 +72,24 @@ async def another(text, title, epi, sea, metadata, dl):
     return text
 
 
-async def forward_(name, out, ds, mi, f):
+async def forward_(name, out, ds, mi, f, ani, n, pf):
     fb = conf.FBANNER
     fc = conf.FCHANNEL
     fs = conf.FSTICKER
     if not fc:
         return
     try:
-        pic_id, f_msg = await f_post(name, out, conf.FCODEC, mi, _filter=f, evt=fb)
+        pic_id, f_msg = await f_post(
+            name, out, ani, conf.FCODEC, mi, _filter=f, evt=fb, direct=n, p_file=pf
+        )
         if pic_id:
             await pyro.send_photo(photo=pic_id, caption=f_msg, chat_id=fc)
     except Exception:
         await logger(Exception)
     await ds.copy(chat_id=fc)
     if not fs:
+        return
+    if ejob.jobs() > 1:
         return
     if not fb:
         queue = get_queue()
@@ -118,6 +121,10 @@ async def forward_(name, out, ds, mi, f):
 
 
 def skip(queue_id):
+    ejob.busy = True
+    ejob.done()
+    if ejob.pending():
+        return
     if einfo.batch:
         return
     bqueue = get_bqueue()
@@ -140,7 +147,7 @@ async def something():
 
 async def thing():
     try:
-        while get_var("pausefile"):
+        while get_var("paused"):
             await asyncio.sleep(10)
         queue = get_queue()
         if not queue:
@@ -158,7 +165,10 @@ async def thing():
         download = None
         log_channel = conf.LOG_CHANNEL
         name, u_msg, v_f = list(queue.values())[0]
-        v, f, m = v_f
+        v, f, m, n, au = v_f
+        ani = au[0]
+        einfo.uri = au[1]
+        param_file = ejob.pending()
         sender_id, message = u_msg
         if not message:
             message = await pyro.get_messages(chat_id, msg_id)
@@ -170,22 +180,27 @@ async def thing():
             einfo.batch = einfo.qbit = True
             file_name, index, name = get_downloadable_batch(queue_id)
             einfo.select = index
+            n = None  # To prevent hell from breaking loose
             if name is None:
                 einfo.batch = None
+                ejob.complete()
                 skip(queue_id)
                 await save2db()
                 await save2db("batches")
                 await asyncio.sleep(2)
                 return
 
-        msg_p = await message.reply("`Download Pending…`", quote=True)
+        try:
+            msg_p = await message.reply("`Download Pending…`", quote=True)
+        except Exception:
+            msg_p = await pyro.send_message(chat_id, "`Download Pending…`")
+            message = msg_p if einfo.uri else message
         await asyncio.sleep(2)
         msg_t = await tele.edit_message(
             chat_id, msg_p.id, "`Waiting for download handler…`"
         )
-        # USER_MAN.clear()
-        # USER_MAN.append(user)
-        _id = f"{msg_t.chat_id}:{msg_t.id}"
+
+        ejob.id = _id = f"{msg_t.chat_id}:{msg_t.id}"
         if not sender_id or str(sender_id).startswith("-100"):
             sender_id = 777000
         sender = await pyro.get_users(sender_id)
@@ -204,33 +219,13 @@ async def thing():
             op = None
         try:
             dl = "downloads/" + name
-            if message.text:
-                if message.text.startswith("/"):
-                    einfo.uri = message.text.split(" ", maxsplit=1)[1].strip()
-                else:
-                    einfo.uri = message.text
-                if m[0] == "aria2":
-                    args_list = ["-f", "-rm", "-tc", "-tf", "-v"]
-                else:
-                    args_list = [
-                        "-f",
-                        "-n",
-                        "-rm",
-                        "-s",
-                        "-tc",
-                        "-tf",
-                        "-v",
-                        ["-b", "store_true"],
-                        ["-y", "store_true"],
-                    ]
+            if einfo.uri:
+                if m[0] == "qbit":
                     einfo.qbit = True
                     if m[1].split()[0].lower() == "select.":
                         einfo.select = int(m[1].split()[1])
-                einfo.uri = (
-                    get_args(*args_list, to_parse=einfo.uri, get_unknown=True)
-                )[1]
 
-            if cached:
+            if await cache_dl(check=True):
                 raise (AlreadyDl)
 
             sdt = time.time()
@@ -256,6 +251,8 @@ async def thing():
                 mark_file_as_done(einfo.select, queue_id)
                 await save2db()
                 await save2db("batches")
+                if conf.COMP_MODE:
+                    download.un_register(True)
                 await asyncio.sleep(2)
                 return
             dl = download.path
@@ -263,6 +260,8 @@ async def thing():
             einfo.cached_dl = True
             msg_r = await reply_message(msg_p, "`Waiting for caching to complete.`")
             sdt = time.time()
+            download = ejob.prev_dl_client
+            dl = download.path if download else dl
             rslt = await get_cached(dl, sender, sender_id, msg_t, op)
             await msg_r.delete()
             if rslt is False:
@@ -275,6 +274,8 @@ async def thing():
             mark_file_as_done(einfo.select, queue_id)
             await save2db()
             await save2db("batches")
+            if download and conf.COMP_MODE:
+                download.un_register(True)
             return
         edt = time.time()
         dtime = tf(edt - sdt)
@@ -283,10 +284,20 @@ async def thing():
         d_ext = split_ext(d_fname)[-1]
         _dir = "encode"
         file_name, metadata_name = await parse(
-            name, d_fname, d_ext, v=v, folder=d_folder, _filter=f
+            name,
+            d_fname,
+            d_ext,
+            anilist=ani,
+            v=v,
+            folder=d_folder,
+            _filter=f,
+            direct=n,
+            p_file=param_file,
         )
         out = f"{_dir}/{file_name}"
-        title, epi, sn, rlsgrp = await dynamicthumb(name, _filter=f)
+        title, epi, sn, rlsgrp = await dynamicthumb(
+            name, anilist=(not n or ani), _filter=f
+        )
 
         c_n = f"{title} {sn or str()}".strip()
         if einfo.previous and einfo.previous == c_n:
@@ -299,9 +310,12 @@ async def thing():
             await msg_p.reply("#" + c_n) if log_channel == chat_id else None
         if einfo.uri and conf.DUMP_LEECH is True:
             asyncio.create_task(dumpdl(dl, name, thumb2, msg_t.chat_id, message))
-        if len(queue) > 1 and conf.CACHE_DL and not einfo.batch:
+        if ejob.jobs() > 1:
+            await cache_dl(cached=True)
+            ejob.prev_dl_client = download
+        elif len(queue) > 1 and conf.CACHE_DL and not einfo.batch:
             await cache_dl()
-        with open(ffmpeg_file, "r") as file:
+        with open(param_file, "r") as file:
             nani = file.read().rstrip()
         ffmpeg = await another(nani, title, epi, sn, metadata_name, dl)
 
@@ -326,12 +340,10 @@ async def thing():
             exe_prefix=ffmpeg.split(maxsplit=1)[0],
         )
         if encode.process.returncode != 0:
-            if download:
-                await download.clean_download()
             s_remove(out)
             skip(queue_id)
             mark_file_as_done(einfo.select, queue_id)
-            E_CANCEL.pop(_id) if E_CANCEL.get(_id) else None
+            e_cancel().pop(_id) if e_cancel().get(_id) else None
             await save2db()
             await save2db("batches")
             return
@@ -345,11 +357,26 @@ async def thing():
         if file_exists(mux_file):
             with open(mux_file, "r") as file:
                 mux_args = file.read().rstrip("\n").rstrip()
+            o_out = out
+            o_fold, o_fname = path_split(out)
+            o_ext = split_ext(o_fname)[-1]
+            file_name, metadata_name = await parse(
+                name,
+                o_fname,
+                o_ext,
+                anilist=ani,
+                v=v,
+                folder=o_fold,
+                _filter=f,
+                direct=n,
+                p_file=param_file,
+            )
+            out = f"{_dir}/{file_name}"
             smt = time.time()
-            mux_args = await another(mux_args, title, epi, sn, metadata_name, dl)
+            mux_args = await another(mux_args, title, epi, sn, metadata_name, o_out)
             ffmpeg = 'ffmpeg -i """{}""" ' f"{mux_args} -codec copy" ' """{}""" -y'
             _out = split_ext(out)[0] + " [Muxing]" + split_ext(out)[1]
-            cmd = ffmpeg.format(out, _out)
+            cmd = ffmpeg.format(o_out, _out)
             encode = encoder(_id, event=msg_t)
             await encode.start(cmd)
             stderr = (await encode.await_completion())[1]
@@ -364,16 +391,14 @@ async def thing():
                 log_msg=op,
             )
             if encode.process.returncode != 0:
-                if download:
-                    await download.clean_download()
                 s_remove(out, _out)
                 skip(queue_id)
                 mark_file_as_done(einfo.select, queue_id)
-                E_CANCEL.pop(_id) if E_CANCEL.get(_id) else None
+                e_cancel().pop(_id) if e_cancel().get(_id) else None
                 await save2db()
                 await save2db("batches")
                 return
-            s_remove(out)
+            s_remove(o_out)
             copy_file(_out, out)
             s_remove(_out)
             emt = time.time()
@@ -381,7 +406,16 @@ async def thing():
 
         sut = time.time()
         fname = path_split(out)[1]
-        pcap = await custcap(name, fname, ver=v, encoder=conf.ENCODER, _filter=f)
+        pcap = await custcap(
+            name,
+            fname,
+            anilist=ani,
+            ver=v,
+            encoder=conf.ENCODER,
+            _filter=f,
+            direct=n,
+            p_file=param_file,
+        )
         await op.edit(f"`Uploading…` `{out}`") if op else None
         upload = uploader(sender_id, _id)
         up = await upload.start(msg_t.chat_id, out, msg_p, thumb2, pcap, message)
@@ -399,9 +433,7 @@ async def thing():
             mark_file_as_done(einfo.select, queue_id)
             await save2db()
             await save2db("batches")
-            if download:
-                await download.clean_download()
-            s_remove(thumb2, dl, out)
+            s_remove(thumb2, out)
             return
         eut = time.time()
         utime = tf(eut - sut)
@@ -418,7 +450,9 @@ async def thing():
 
         text = str()
         mi = await info(dl)
-        forward_task = asyncio.create_task(forward_(name, out, up, mi, f))
+        forward_task = asyncio.create_task(
+            forward_(name, out, up, mi, f, ani, n, param_file)
+        )
 
         text += f"**Source:** `[{rlsgrp}]`"
         if mi:
@@ -447,9 +481,7 @@ async def thing():
         await save2db()
         await save2db("batches")
         s_remove(thumb2)
-        if download:
-            await download.clean_download()
-        s_remove(dl, out)
+        s_remove(out)
 
     except Exception:
         await logger(Exception)
@@ -463,4 +495,9 @@ async def thing():
 
     finally:
         einfo.reset()
+        if not ejob.pending():
+            ejob.reset(force=True)
+            if download:
+                if not (download.is_cancelled or download.download_error):
+                    await download.clean_download()
         await asyncio.sleep(5)

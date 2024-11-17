@@ -8,12 +8,14 @@ import flag
 import humanize
 import pycountry
 
-from bot import conf, parse_file, release_name, release_name_b
+from bot import _bot, conf, ffmpeg_file, parse_file, release_name, release_name_b
 
 from .bot_utils import (
     auto_rename,
     crc32,
+    encode_job,
     get_codec,
+    get_codecs,
     post_to_tgph,
     sync_to_async,
     text_filter,
@@ -209,8 +211,10 @@ async def get_file_tag(_infile, caption=False, audio_only=False):
                 out = "Tri"
             elif len(_ainfo.split("|")) == 2:
                 out = "Dual"
+                if _ainfo.split("|")[0] == _ainfo.split("|")[1]:
+                    out = None if not audio_only else _ainfo.split("|")[0].capitalize()
             else:
-                out = None if not audio_only else _ainfo
+                out = None if not audio_only else _ainfo.capitalize()
         elif _ainfo is None:
             out = "TBD"
     else:
@@ -223,7 +227,10 @@ async def get_file_tag(_infile, caption=False, audio_only=False):
                 elif audio_count == 3:
                     out += "(Tri-Audio) "
                 elif audio_count == 2:
-                    out += f"(Dual-Audio) "
+                    if _ainfo.split("|")[0] == _ainfo.split("|")[1]:
+                        pass
+                    else:
+                        out += f"(Dual-Audio) "
             if _sinfo:
                 subs = _sinfo.split("|")
                 sub_count = len(subs)
@@ -251,6 +258,17 @@ async def get_file_tag(_infile, caption=False, audio_only=False):
     return out
 
 
+def custom_rename(title, season, episode, audio, rcodec):
+    res = _bot.custom_rename
+    codec = (rcodec.split()[1]).strip() if rcodec else str()
+    quality = (rcodec.split()[0]).strip() if rcodec else str()
+    season = "1" if not season else season
+    res = res.format(**locals())
+    res = res.strip()
+    res += ".mkv"
+    return res, res
+
+
 def get_flag(lang_t):
     if not lang_t == "?":
         if "-" in lang_t:
@@ -267,6 +285,8 @@ def get_flag(lang_t):
             lang_t = "ind"
         elif lang_t.casefold() == "ind":
             lang_t = "Indonesia"
+        elif lang_t.casefold() == "chi":
+            lang_t = "China"
         try:
             lang_t = pycountry.countries.search_fuzzy(lang_t)
         except Exception:
@@ -323,8 +343,12 @@ async def parse(
     folder="downloads/",
     _filter=None,
     ccodec=None,
+    direct=None,
+    p_file=ffmpeg_file,
 ):
     try:
+        if direct:
+            return direct, direct
         _parsed = anitopy.parse(name)
         name, fil2, fil3 = await filter_name(name, _filter)
 
@@ -364,7 +388,7 @@ async def parse(
         folder += "/" if not folder.endswith("/") else str()
         _infile = folder + _file
         r_is_end = True if ri == "[END]" else False
-        codec = await get_codec()
+        codec = await get_codec(p_file)
         codec = ccodec or codec
         con = None
 
@@ -399,8 +423,13 @@ async def parse(
         else:
             f_title = title
 
+        re_title = f_title
         ar = txt_to_str(ar_file)
         f_title = await auto_rename(f_title, or_title, ar)
+        title = f_title if re_title != f_title else title
+
+        if _bot.custom_rename:
+            return custom_rename(f_title, sn, epi, a_con, codec)
 
         file_name = str()
         file_name += release_name
@@ -419,7 +448,11 @@ async def parse(
         if a_con:
             file_name += f" [{a_con}]"
         file_name2 = file_name.replace(f_title, title)
-        file_name2 = file_name2.replace(release_name, release_name_b)
+        file_name2 = (
+            file_name2.replace(release_name, release_name_b)
+            if release_name
+            else file_name2
+        )
         file_name2 = (
             file_name2.replace(f"[{a_con}]", f"- {et} [{a_con}]")
             if et and a_con
@@ -433,7 +466,7 @@ async def parse(
         file_name += ".mkv"
     except Exception:
         await logger(Exception)
-        file_name = _file.replace(f".{_ext}", f" {conf.C_LINK}.{_ext}")
+        file_name = _file.replace(f"{_ext}", f" {conf.C_LINK}{_ext}")
         file_name2 = file_name
     if "/" in file_name:
         file_name = file_name.replace("/", " ")
@@ -459,6 +492,12 @@ async def dynamicthumb(name, thum="thumb2.jpg", anilist=True, _filter=None):
             sn = None
         # release group
         rg = parsed.get("release_group")
+
+        ar = txt_to_str(ar_file)
+        tparse, title_ = await auto_rename(title, title, ar, general=True)
+        anilist = False if not tparse else anilist
+        title = title_
+
         if file_exists(parse_file) or not anilist:
             raise Exception("Parsing turned off")
         try:
@@ -498,12 +537,26 @@ async def custcap(
     encoder=None,
     _filter=None,
     ccodec=None,
+    direct=None,
+    p_file=ffmpeg_file,
 ):
+    if direct:
+        return f"`{direct}`"
     if conf.FL_CAP:
         return f"`{fname}`"
     if not conf.EXT_CAP:
         return await simplecap(
-            name, fname, anilist, cust_type, folder, ver, encoder, _filter, ccodec
+            name,
+            fname,
+            anilist,
+            cust_type,
+            folder,
+            ver,
+            encoder,
+            _filter,
+            ccodec,
+            direct,
+            p_file,
         )
     try:
         name, fil2, fil3 = await filter_name(name, _filter)
@@ -541,7 +594,7 @@ async def custcap(
         ccd = conf.CAP_DECO if not ccd else ccd
         or_title = title
         r_is_end = True if ri == "[END]" else False
-        codec = await get_codec()
+        codec = await get_codec(p_file)
         codec = ccodec or codec
         cap_info = await get_cus_tag(name, rg, True)
         cap_info = await get_file_tag(out, True) if not cap_info else cap_info
@@ -626,6 +679,8 @@ async def simplecap(
     encoder=None,
     _filter=None,
     ccodec=None,
+    direct=None,
+    p_file=ffmpeg_file,
 ):
     try:
         name, fil2, fil3 = await filter_name(name, _filter)
@@ -662,7 +717,7 @@ async def simplecap(
         out = folder + fname
         or_title = title
         r_is_end = True if ri == "[END]" else False
-        codec = await get_codec()
+        codec = await get_codec(p_file)
         codec = ccodec or codec
         cap_info = await get_cus_tag(name, rg, True)
         cap_info = await get_file_tag(out, True) if not cap_info else cap_info
@@ -684,7 +739,8 @@ async def simplecap(
             te = str(json.get("episodes"))
             te = "0" + str(te) if epi.startswith("0") else te
         except Exception:
-            log(Exception)
+            # log(Exception)
+            pass
 
         title = string.capwords(title)
         ar = txt_to_str(ar_file)
@@ -734,8 +790,8 @@ async def simplecap(
     return caption
 
 
-async def qparse(name, ver=None, fil=None):
-    return (await parse(name, v=ver, _filter=fil))[0]
+async def qparse(name, ver=None, fil=None, rdir=None, ani=True):
+    return (await parse(name, anilist=ani, v=ver, _filter=fil, direct=rdir))[0]
 
 
 async def qparse_t(name, ver=None, fil=None):
@@ -745,12 +801,25 @@ async def qparse_t(name, ver=None, fil=None):
     )
 
 
-async def f_post(name, out, fcodec=None, mi=None, _filter=None, evt=True):
+async def f_post(
+    name,
+    out,
+    anilist=True,
+    fcodec=None,
+    mi=None,
+    _filter=None,
+    evt=True,
+    direct=None,
+    p_file=ffmpeg_file,
+):
     if conf.NO_BANNER:
+        return None, None
+    if encode_job.pending() != ffmpeg_file:
         return None, None
     try:
         name = (await filter_name(name, _filter))[0]
         ## Get info ##
+        name = direct or name
         parsed = anitopy.parse(name)
         # title
         title = parsed.get("anime_title")
@@ -772,10 +841,14 @@ async def f_post(name, out, fcodec=None, mi=None, _filter=None, evt=True):
         if sn == "1":
             sn = None
 
-        codec = fcodec if fcodec else await get_codec()
+        ar = txt_to_str(ar_file)
+        tparse, title_ = await auto_rename(title, title, ar, general=True)
+        anilist = False if not tparse else anilist
+        title = title_
+        codec = fcodec if fcodec else await get_codecs(encode_job.get_pending())
 
         try:
-            if file_exists(parse_file):
+            if file_exists(parse_file) or not anilist or direct:
                 raise Exception("Parsing turned off")
             json = await get_ani_info(title)
             if sn:

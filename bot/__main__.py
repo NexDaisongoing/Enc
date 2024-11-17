@@ -24,13 +24,14 @@ from .utils.msg_utils import event_handler
 from .workers.handlers.dev import bash
 from .workers.handlers.dev import eval as eval_
 from .workers.handlers.dev import eval_message_p
-from .workers.handlers.e_callbacks import pres, skip, stats
+from .workers.handlers.e_callbacks import pres, skip, skip_jobs, stats
 from .workers.handlers.manage import (
     allowgroupenc,
     auto_rename,
     change,
     check,
     clean,
+    custom_rename,
     del_auto_rename,
     discap,
     fc_forward,
@@ -70,6 +71,7 @@ from .workers.handlers.rebut import (
     en_rename,
     en_upload,
     getlogs,
+    getminfo,
     getthumb,
 )
 from .workers.handlers.stuff import beck
@@ -269,6 +271,11 @@ async def _(e):
     await skip(e)
 
 
+@tele.on(events.callbackquery.CallbackQuery(data=re.compile(b"jskip(.*)")))
+async def _(e):
+    await skip_jobs(e)
+
+
 @tele.on(events.callbackquery.CallbackQuery(data=re.compile(b"dl_stat(.*)")))
 async def _(e):
     await dl_stat(e)
@@ -327,6 +334,11 @@ async def _(e):
     await event_handler(e, addqueue, pyro)
 
 
+@tele.on(events.NewMessage(pattern=command(["m", "mediainfo"])))
+async def _(e):
+    await event_handler(e, getminfo, pyro)
+
+
 @tele.on(events.NewMessage(pattern=command(["download", "dl"], ["/", "!", "/"])))
 async def _(e):
     await event_handler(e, en_download, pyro)
@@ -373,6 +385,11 @@ async def _(e):
 @tele.on(events.NewMessage(pattern=command(["anime"])))
 async def _(e):
     await event_handler(e, en_anime, require_args=True)
+
+
+@tele.on(events.NewMessage(pattern=command(["setrename"])))
+async def _(e):
+    await event_handler(e, custom_rename, require_args=True)
 
 
 @tele.on(events.NewMessage(pattern=command(["name"])))

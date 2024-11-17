@@ -13,6 +13,10 @@ from bot import (
     asyncio,
     caption_file,
     dt,
+    ffmpeg_file,
+    ffmpeg_file2,
+    ffmpeg_file3,
+    ffmpeg_file4,
     filter_file,
     itertools,
     tele,
@@ -24,75 +28,25 @@ from bot import (
 )
 from bot.config import _bot, conf
 
+OK = {}
 suffix = conf.CMD_SUFFIX
 
 
-class Var_list:
-    TEMP_ONLY_IN_GROUP = []
-    DOCKER_DEPLOYMENT = []
-    DISPLAY_DOWNLOAD = []
-    PREVIEW_LIST = []
-    QUEUE_STATUS = []
-    CACHE_QUEUE = []
-    TEMP_USERS = []
-    BATCH_ING = []
-    LAST_ENCD = []
-    PAUSEFILE = []
-    USER_MAN = []
-    GROUPENC = []
-    VERSION2 = []
-    U_CANCEL = []
-    R_QUEUE = []
-    STARTUP = []
-    WORKING = []
-    EVENT2 = []
-
-    PREVIEW_BATCH = {}
-    BATCH_QUEUE = {}
-    E_CANCEL = {}
-    RSS_DICT = {}
-    QUEUE = {}
-    OK = {}
-
-    FINISHED_PROGRESS_STR = "🧡"
-    UN_FINISHED_PROGRESS_STR = "🤍"
-    MAX_MESSAGE_LENGTH = 4096
-
-
-var = Var_list()
-
-
-######## VAR EDITOR #########
-
-
-def edit_var(var, value, replace=False, remove=False):
-    if remove:
-        var.remove(value)
-        return
-    if replace:
-        var.clear()
-    var.append(value)
-
-
-attrs = dir(var)
-globals().update({n: getattr(var, n) for n in attrs if not n.startswith("_")})
-
-
 def add_temp_user(id):
-    TEMP_USERS.append(id)
+    _bot.temp_users.append(id)
 
 
 def bot_is_paused():
-    if PAUSEFILE:
+    if _bot.paused:
         return True
 
 
 def u_cancelled():
-    return U_CANCEL
+    return _bot.u_cancel
 
 
 def enc_canceller():
-    return E_CANCEL
+    return _bot.e_cancel
 
 
 def get_f():
@@ -104,23 +58,23 @@ def get_f():
 
 
 def get_bqueue():
-    return BATCH_QUEUE
+    return _bot.batch_queue
 
 
 def get_preview(list=False):
-    return PREVIEW_BATCH if not list else PREVIEW_LIST
+    return _bot.preview_batch if not list else _bot.preview_list
 
 
 def get_previewer():
-    return BATCH_ING[0] if BATCH_ING else None
+    return _bot.batch_ing[0] if _bot.batch_ing else None
 
 
 def get_queue():
-    return QUEUE
+    return _bot.queue
 
 
 def get_pause_status():
-    return PAUSEFILE[0] if PAUSEFILE else None
+    return _bot.paused[0] if _bot.paused else None
 
 
 def get_aria2():
@@ -131,26 +85,25 @@ def get_var(var):
     var_dict = dict()
     var_dict.update(
         {
-            "groupenc": GROUPENC,
-            "startup": STARTUP,
-            "version2": VERSION2,
-            "pausefile": PAUSEFILE,
+            "groupenc": _bot.groupenc,
+            "version2": _bot.version2,
+            "paused": _bot.paused,
         }
     )
     return var_dict.get(var.casefold())
 
 
 def get_v():
-    return VERSION2[0] if VERSION2 else None
+    return _bot.version2[0] if _bot.version2 else None
 
 
 def if_queued():
-    if QUEUE:
+    if _bot.queue:
         return True
 
 
 def pause(unpause=False, status=1):
-    return PAUSEFILE.clear() if unpause else PAUSEFILE.append(status)
+    return _bot.paused.clear() if unpause else _bot.paused.append(status)
 
 
 async def rm_pause(match=None, time=0):
@@ -164,7 +117,7 @@ async def rm_pause(match=None, time=0):
 
 
 def rm_temp_user(id):
-    TEMP_USERS.remove(id)
+    _bot.temp_users.remove(id)
 
 
 class Qbit_c:
@@ -198,6 +151,94 @@ class Encode_info:
 
 
 encode_info = Encode_info()
+
+
+class Encode_job:
+    def __init__(self):
+        self.reset(force=True)
+
+    class Jobs:
+        def __init__(self):
+            self.f1 = True
+            self.f2 = Path(ffmpeg_file2).is_file()
+            self.f3 = Path(ffmpeg_file3).is_file()
+            self.f4 = Path(ffmpeg_file4).is_file()
+
+    def jobs(self, list=False):
+        job = []
+        for x in (self.ins.f1, self.ins.f2, self.ins.f3, self.ins.f4):
+            job.append(x) if x else None
+        if list:
+            return job
+        return len(job)
+
+    def complete(self):
+        for i in self.jobs(list=True):
+            self.done()
+
+    def done(self):
+        if self.ins.f1:
+            self.ins.f1 = None
+        elif self.ins.f2:
+            self.ins.f2 = None
+        elif self.ins.f3:
+            self.ins.f3 = None
+        elif self.ins.f4:
+            self.ins.f4 = None
+
+    def get_pending(self):
+        list = []
+        if self.ins.f1:
+            list.append(ffmpeg_file)
+        if self.ins.f2:
+            list.append(ffmpeg_file2)
+        if self.ins.f3:
+            list.append(ffmpeg_file3)
+        if self.ins.f4:
+            list.append(ffmpeg_file4)
+        return list
+
+    def get_pending_index(self):
+        if self.ins.f1:
+            return 1
+        elif self.ins.f2:
+            return 2
+        elif self.ins.f3:
+            return 3
+        elif self.ins.f4:
+            return 4
+
+    def get_pending_pos(self):
+        if self.ins.f1:
+            return
+        elif self.ins.f2:
+            return "2nd"
+        elif self.ins.f3:
+            return "3rd"
+        elif self.ins.f4:
+            return "4th"
+
+    def pending(self):
+        if self.ins.f1:
+            return ffmpeg_file
+        elif self.ins.f2:
+            return ffmpeg_file2
+        elif self.ins.f3:
+            return ffmpeg_file3
+        elif self.ins.f4:
+            return ffmpeg_file4
+
+    def reset(self, force=False):
+        if not force and self.busy:
+            return
+        self.ins = self.Jobs()
+        self.busy = False
+        self.id = None
+        self.prev_dl_client = None
+
+
+encode_job = Encode_job()
+
 
 sdict = dict()
 sdict.update(
@@ -591,15 +632,24 @@ async def crc32(filename: str, chunksize=65536):
         return "%X" % (checksum & 0xFFFFFFFF)
 
 
-async def get_codec():
+async def get_codecs(files):
+    out = str()
+    for file in files:
+        out += await get_codec(file)
+        out += ", "
+    return out.strip(", ")
+
+
+async def get_codec(file="ffmpeg.txt"):
     """Get file codec from ffmpeg encoding parameters"""
-    with open("ffmpeg.txt", "r") as file:
+    with open(file, "r") as file:
         ff_code = file.read().rstrip()
         file.close()
     s_check = dict()
     __out = ""
     s_check.update(
         {
+            "360": "360p",
             "480": "480p",
             "720": "720p",
             "1080": "1080p",
@@ -616,12 +666,13 @@ async def get_codec():
 
 
 async def auto_rename(
-    parsed_name: str, original_name: str, refunc: str, caption=False
+    parsed_name: str, original_name: str, refunc: str, caption=False, general=False
 ) -> str:
     """
     Auto-rename file/caption name, if it matches given string or list of strings seperated by newlines
     """
     out_name = ""
+    caption = True if general else caption
     if refunc:
         for ren in refunc.split("\n"):
             ren = ren.strip()
@@ -639,6 +690,22 @@ async def auto_rename(
                     out_name = re_name
                 else:
                     out_name = cap_name
+            if general:
+                if len(ren.split("|")) > 3:
+                    key = ren.split("|")[2].strip()
+                    if str(key) == "00":
+                        return False, original_name
+                    elif str(key) == "0":
+                        return False, out_name
+                    elif str(key) == "1":
+                        return True, out_name
+                    else:
+                        return True, key
+                else:
+                    return True, original_name
+
+    if general:
+        return True, original_name
     if not out_name:
         out_name = parsed_name
     elif str(out_name) == "00":
