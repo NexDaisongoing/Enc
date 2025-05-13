@@ -50,7 +50,9 @@ async def start_aria2p():
         await asyncio.sleep(3)
         aria2.remove(downloads, force=True, files=True, clean=True)
         _bot.aria2 = aria2
+        await logger.info("Attaching aria2p client...")
         _bot.sas = True
+        await logger.info("Aria2p client attached successfully.")
     except Exception:
         await logger(Exception, critical=True)
 
