@@ -18,7 +18,7 @@ from .before import *
 
 
 async def wait_for_aria2_ready(retries=10, delay=1):
-    url = f"http://localhost:{conf.ARIA2_PORT}/jsonrpc"
+    url = f"http://localhost:8800/jsonrpc"
     for _ in range(retries):
         try:
             async with aiohttp.ClientSession() as session:
@@ -39,7 +39,7 @@ async def wait_for_aria2_ready(retries=10, delay=1):
 async def start_aria2p():
     try:
         aria2 = aria2p.API(
-            aria2p.Client(host="http://localhost", port=conf.ARIA2_PORT, secret="")
+            aria2p.Client(host="http://localhost", port=8800, secret="")
         )
         aria2.add(
             "https://nyaa.si/download/1752639.torrent",
