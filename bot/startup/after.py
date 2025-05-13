@@ -151,7 +151,7 @@ async def on_startup():
         scheduler.start()
         asyncio.create_task(autostat())
         asyncio.create_task(start_rpc())
-        asyncio.create_task(start_qbit())
+        #asyncio.create_task(start_qbit())
 
         loop = asyncio.get_running_loop()
         for signame in {"SIGINT", "SIGTERM", "SIGABRT"}:
