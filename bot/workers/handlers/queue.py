@@ -39,6 +39,9 @@ from bot.utils.msg_utils import (
 from bot.utils.queue_utils import get_queue_msg, q_dup_check, queue_status
 from bot.workers.downloaders.dl_helpers import get_leech_name, get_torrent
 
+from bot.workers.downloaders.dl_helpers import get_jd_leech_name
+from bot.workers.downloaders.jd_helpers import check_jd_available
+
 str_esc = string_escape
 
 
