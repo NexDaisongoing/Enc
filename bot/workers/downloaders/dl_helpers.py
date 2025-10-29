@@ -104,7 +104,8 @@ async def download2(dl, file, message=None, e=None):
         await logger(Exception)
 
 
-async def get_leech_name(url):
+async def get_leech_name(url, use_jd_fallback=True):
+    """Get filename from URL using Aria2, fallback to JDownloader if enabled"""
     aria2 = get_aria2()
     dinfo = Qbit_c()
     try:
@@ -140,6 +141,14 @@ async def get_leech_name(url):
     except Exception as e:
         dinfo.error = e
         await logger(Exception)
+        
+        # Try JDownloader fallback if enabled
+        if use_jd_fallback and getattr(conf, 'ENABLE_JD_FALLBACK', True) and dinfo.error:
+            try:
+                from .jd_helpers import get_jd_name
+                dinfo = await get_jd_name(url)
+            except Exception:
+                await logger(Exception)
     finally:
         return dinfo
 
