@@ -11,6 +11,14 @@ from bot.utils.bot_utils import (
 )
 from bot.utils.log_utils import log, logger
 
+# Import JDownloader helpers
+from .jd_helpers import (
+    check_jd_available,
+    get_jd_link_info,
+    jd_download,
+    rm_jd_download,
+)
+
 
 def clean_aria_dl(download):
     aria2 = get_aria2()
@@ -104,10 +112,32 @@ async def download2(dl, file, message=None, e=None):
         await logger(Exception)
 
 
-async def get_leech_name(url, use_jd_fallback=True):
-    """Get filename from URL using Aria2, fallback to JDownloader if enabled"""
+async def get_leech_name(url, try_jd=False):
+    """
+    Get filename from URL using aria2, with JDownloader fallback
+    
+    Args:
+        url: Download URL
+        try_jd: Force use of JDownloader instead of aria2
+    """
+    # Try JDownloader first if explicitly requested or if JD_FALLBACK is enabled and aria2 fails
+    if try_jd or not get_aria2():
+        jd_available = await check_jd_available()
+        if jd_available:
+            return await get_jd_link_info(url)
+    
     aria2 = get_aria2()
     dinfo = Qbit_c()
+    
+    if not aria2:
+        # Aria2 not available, try JDownloader
+        jd_available = await check_jd_available()
+        if jd_available:
+            return await get_jd_link_info(url)
+        else:
+            dinfo.error = "Neither aria2 nor JDownloader is available"
+            return dinfo
+    
     try:
         url = replace_proxy(url)
         downloads = await sync_to_async(aria2.add, url, {"dir": f"{os.getcwd()}/temp"})
@@ -122,8 +152,18 @@ async def get_leech_name(url, use_jd_fallback=True):
                 dinfo.error = "E408: Getting filename timed out."
                 break
             if download.status == "error":
-                dinfo.error = "E" + download.error_code + ": " + download.error_message
+                error_msg = "E" + download.error_code + ": " + download.error_message
+                dinfo.error = error_msg
+                
+                # Try JDownloader as fallback if enabled
+                if conf.JD_FALLBACK and not try_jd:
+                    await sync_to_async(clean_aria_dl, download)
+                    log(f"Aria2 failed: {error_msg}, trying JDownloader...")
+                    jd_available = await check_jd_available()
+                    if jd_available:
+                        return await get_jd_link_info(url)
                 break
+                
             if download.name.startswith("[METADATA]") or download.name.endswith(
                 ".torrent"
             ):
@@ -139,18 +179,22 @@ async def get_leech_name(url, use_jd_fallback=True):
             break
         await sync_to_async(clean_aria_dl, download)
     except Exception as e:
-        dinfo.error = e
+        dinfo.error = str(e)
         await logger(Exception)
         
-        # Try JDownloader fallback if enabled
-        if use_jd_fallback and getattr(conf, 'ENABLE_JD_FALLBACK', True) and dinfo.error:
-            try:
-                from .jd_helpers import get_jd_name
-                dinfo = await get_jd_name(url)
-            except Exception:
-                await logger(Exception)
+        # Try JDownloader as fallback
+        if conf.JD_FALLBACK and not try_jd:
+            log(f"Aria2 exception: {e}, trying JDownloader...")
+            jd_available = await check_jd_available()
+            if jd_available:
+                return await get_jd_link_info(url)
     finally:
         return dinfo
+
+
+async def get_jd_leech_name(url):
+    """Get filename using JDownloader directly"""
+    return await get_leech_name(url, try_jd=True)
 
 
 async def base_get_torrent(url):
