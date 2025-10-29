@@ -59,10 +59,7 @@ class Downloader:
         self.use_jdownloader = False
         self.unfin_str = conf.UN_FINISHED_PROGRESS_STR
         self.display_dl_info = _bot.display_additional_dl_info
-        if conf.PAUSE_ON_DL_INFO:
-            self.pause_on_dl_info = True
-        else:
-            self.pause_on_dl_info = False
+        self.pause_on_dl_info = bool(conf.PAUSE_ON_DL_INFO)
         if self.dl_info:
             self.callback_data_i = "dl_info"
             self.callback_data_b = "back"
@@ -71,26 +68,15 @@ class Downloader:
         return "#wip"
 
     def gen_buttons(self):
-        # Create a "Cancel" button
         cancel_button = InlineKeyboardButton(
             text=f"{enmoji()} Cancel Download", callback_data=self.callback_data
         )
         if self.dl_info:
-            # Create an "info" button
-            info_button = InlineKeyboardButton(
-                text="ℹ️", callback_data=self.callback_data_i
-            )
-            # Create a "more" button
-            more_button = InlineKeyboardButton(
-                text="More…",
-                callback_data=f"more 0",
-            )
-            # create "back" button
-            back_button = InlineKeyboardButton(
-                text="↩️", callback_data=self.callback_data_b
-            )
+            info_button = InlineKeyboardButton(text="ℹ️", callback_data=self.callback_data_i)
+            more_button = InlineKeyboardButton(text="More…", callback_data="more 0")
+            back_button = InlineKeyboardButton(text="↩️", callback_data=self.callback_data_b)
         else:
-            info_button, more_button, back_button = None, None, None
+            info_button = more_button = back_button = None
         return info_button, more_button, back_button, cancel_button
 
     async def log_download(self):
@@ -99,10 +85,7 @@ class Downloader:
                 cancel_button = InlineKeyboardButton(
                     text=f"{enmoji()} CANCEL DOWNLOAD", callback_data=self.callback_data
                 )
-                more_button = InlineKeyboardButton(
-                    text="ℹ️",
-                    callback_data=f"more 1",
-                )
+                more_button = InlineKeyboardButton(text="ℹ️", callback_data="more 1")
                 reply_markup = InlineKeyboardMarkup([[more_button], [cancel_button]])
                 dl_info = await parse_dl(self.file_name)
                 msg = "Currently downloading a video"
@@ -110,7 +93,7 @@ class Downloader:
                     msg += " from a link"
                 message = await pyro.get_messages(self.lc.chat_id, self.lc.id)
                 self._sender = self._sender or await pyro.get_users(self.sender)
-                log = await message.edit(
+                await message.edit(
                     f"`{msg} sent by` {self._sender.mention(style='md')}\n" + dl_info,
                     reply_markup=reply_markup,
                 )
@@ -122,23 +105,21 @@ class Downloader:
         try:
             self.file_name = dl
             self.register()
+
             if self.qbit:
                 return await self.start3(dl, file, message, e, select)
             elif self.uri and self.use_jdownloader:
                 return await self.start_jd(dl, file, message, e)
-
             elif self.uri:
                 return await self.start2(dl, file, message, e)
+
             await self.log_download()
             if self.dl_folder:
                 self.path = dl = self.dl_folder + dl
             if message:
                 self.time = ttt = time.time()
                 media_type = str(message.media)
-                if media_type == "MessageMediaType.DOCUMENT":
-                    media_mssg = "`Downloading a file…`"
-                else:
-                    media_mssg = "`Downloading a video…`"
+                media_mssg = "`Downloading a file…`" if media_type == "MessageMediaType.DOCUMENT" else "`Downloading a video…`"
                 download_task = await pyro.download_media(
                     message=message,
                     file_name=dl,
@@ -146,10 +127,8 @@ class Downloader:
                     progress_args=(pyro, media_mssg, e, ttt),
                 )
             else:
-                download_task = await pyro.download_media(
-                    message=file,
-                    file_name=dl,
-                )
+                download_task = await pyro.download_media(message=file, file_name=dl)
+
             await self.wait()
             if self.is_cancelled:
                 await self.clean_download()
@@ -159,141 +138,10 @@ class Downloader:
         except pyro_errors.BadRequest:
             await reply.edit(f"`Failed {enmoji2()}\nRetrying in 10 seconds…`")
             await asyncio.sleep(10)
-            dl_task = await self.start(dl, file, message, e)
-            return dl_task
-
+            return await self.start(dl, file, message, e)
         except pyro_errors.FloodWait as e:
-            await asyncio.sleep(e.value)
-            await reply.edit(
-                f"`Failed: FloodWait error {enmoji2()}\nRetrying in 10 seconds…`"
-            )
-            await asyncio.sleep(10)
-            dl_task = await self.start(dl, file, message, e)
-            return dl_task
-
-        except Exception:
-            self.un_register()
-            await logger(Exception)
-            return None
-
-    async def start2(self, dl, file, message, e):
-        try:
-            await self.log_download()
-            self.time = ttt = time.time()
-            await asyncio.sleep(3)
-            if not self.aria2:
-                self.download_error = "E404: Aria2 is currently not available."
-                raise Exception(self.download_error)
-            downloads = await sync_to_async(
-                self.aria2.add, self.uri, {"dir": f"{os.getcwd()}/{self.dl_folder}"}
-            )
-            self.uri_gid = downloads[0].gid
-            download = await sync_to_async(self.aria2.get_download, self.uri_gid)
-            while True:
-                if message:
-                    download = await self.progress_for_aria2(download, ttt, e)
-                else:
-                    download = await self.progress_for_aria2(
-                        downloads[0].gid, ttt, e, silent=True
-                    )
-                if not download:
-                    break
-                if download.is_complete:
-                    break
-            await self.wait()
-            self.un_register()
-            return download
-
-        except Exception:
-            self.un_register()
-            await logger(Exception)
-            return None
-
-    async def start3(self, dl, file, message, e, s):
-        try:
-            await self.log_download()
-            await asyncio.sleep(3)
-            self.qb = await sync_to_async(get_qbclient)
-            self.message = e
-            result = await sync_to_async(
-                self.qb.torrents_add,
-                self.uri,
-                save_path=f"{os.getcwd()}/{self.dl_folder}",
-                seeding_time_limit=0,
-                is_paused=False,
-                tags=self.id,
-            )
-            self.time = ttt = time.time()
-            if result.lower() == "ok.":
-                tor_info = await sync_to_async(self.qb.torrents_info, tag=self.id)
-                if len(tor_info) == 0:
-                    while True:
-                        tor_info = await sync_to_async(
-                            self.qb.torrents_info, tag=self.id
-                        )
-                        if len(tor_info) > 0:
-                            break
-                        elif time.time() - ttt >= 120:
-                            self.download_error = "Failed to add torrent…"
-                            raise Exception(self.download_error)
-            else:
-                self.download_error = (
-                    "This Torrent already added or unsupported/invalid link/file"
-                )
-                raise Exception(self.download_error)
-            if tor_info[0].state == "metaDL":
-                st = time.time()
-                await e.edit_text("`Getting torrent's metadata. Please wait…`")
-                while True:
-                    tor_info = await sync_to_async(self.qb.torrents.info, tag=self.id)
-                    if tor_info[0].state != "metaDL":
-                        break
-                    elif time.time() - st >= 360:
-                        self.download_error = "Failed to get metadata…"
-                        raise Exception(self.download_error)
-            if tor_info[0].state == "error":
-                self.download_error = "An unknown error occurred."
-                raise Exception(self.download_error)
-            self.uri_gid = tor_info[0].hash
-            await sync_to_async(self.qb.torrents_pause, torrent_hashes=self.uri_gid)
-            file_list = await get_files_from_torrent(self.uri_gid, self.id)
-            name = file_list[0] if len(file_list) == 1 else None
-            self.file_name = (
-                file_list[s] if s is not None else (name or tor_info[0].name)
-            )
-            self.path = self.dl_folder + self.file_name
-
-            length = len(file_list)
-            x = str()
-            if s is not None:
-                if s > (length - 1):
-                    self.download_error = "qbittorrent: file_id not found."
-                    raise Exception(self.download_error)
-                for i in range(length):
-                    if i != s:
-                        x += str(i) + "|"
-                x = x.strip("|")
-            (
-                await sync_to_async(
-                    self.qb.torrents_file_priority,
-                    torrent_hash=self.uri_gid,
-                    file_ids=x,
-                    priority=0,
-                )
-                if x
-                else None
-            )
-            await sync_to_async(self.qb.torrents_resume, torrent_hashes=self.uri_gid)
-            while True:
-                download = await self.progress_for_qbit()
-                if not download:
-                    break
-                if download.state in ("pausedUP", "stoppedUP"):
-                    break
-            await self.wait()
-            self.un_register()
-            return download
-
+            await asyncio.sleep(e.value + 10)
+            return await self.start(dl, file, message, e)
         except Exception:
             self.un_register()
             await logger(Exception)
@@ -307,20 +155,14 @@ class Downloader:
             app.stop_transmission()
         if round(diff % 10.00) == 0 or current == total:
             percentage = current * 100 / total
-            status = "downloads" + "/status.json"
-            if os.path.exists(status):
-                with open(status, "r+") as f:
-                    statusMsg = json.load(f)
-                    if not statusMsg["running"]:
-                        app.stop_transmission()
             elapsed_time = time_formatter(diff)
             speed = current / diff
             time_to_completion = time_formatter(int((total - current) / speed))
 
             progress = "```\n{0}{1}```\n<b>Progress:</b> `{2}%`\n".format(
-                "".join([fin_str for i in range(math.floor(percentage / 10))]),
+                "".join([fin_str for _ in range(math.floor(percentage / 10))]),
                 "".join(
-                    [self.unfin_str for i in range(10 - math.floor(percentage / 10))]
+                    [self.unfin_str for _ in range(10 - math.floor(percentage / 10))]
                 ),
                 round(percentage, 2),
             )
@@ -336,9 +178,7 @@ class Downloader:
                 )
             )
             try:
-                # Attach the button to the message with an inline keyboard
                 reply_markup = []
-                # file_name = self.file_name.split("/")[-1]
                 dl_info = await parse_dl(self.file_name)
                 (
                     info_button,
@@ -370,267 +210,132 @@ class Downloader:
                 await asyncio.sleep(e.value)
             except BaseException:
                 await logger(Exception)
-                # debug
 
-    async def progress_for_aria2(self, download, start, message, silent=False):
+    # --- JDownloader integration ---
+    async def start_jd(self, dl, file, message="", e=""):
+        """Start JDownloader download"""
         try:
-            download = download.live
-            if download.followed_by_ids:
-                gid = download.followed_by_ids[0]
-                try:
-                    download = await sync_to_async(self.aria2.get_download, gid)
-                except Exception:
-                    log(Exception)
-            if download.status == "error" or self.is_cancelled:
-                if download.status == "error":
-                    self.download_error = (
-                        "E" + download.error_code + ": " + download.error_message
-                    )
-                download = None
-                return await self.clean_download()
+            await self.log_download()
+            self.time = ttt = time.time()
+            await asyncio.sleep(3)
 
-            ud_type = "`Download Pending…`"
-            if not download.name.endswith(".torrent"):
-                self.file_name = download.name
-                self.path = self.dl_folder + self.file_name
-                ud_type = f"**Downloading:**\n`{download.name}`"
-                ud_type += "\n**via:** "
-                if download.is_torrent:
-                    ud_type += "Torrent."
+            from .dl_helpers import jd_add_link, jd_start_download, jd_get_download_status
+
+            jd_info = await jd_add_link(self.uri, save_path=f"{os.getcwd()}/{self.dl_folder}")
+
+            if jd_info.error:
+                self.download_error = f"JDownloader Error: {jd_info.error}"
+                raise Exception(self.download_error)
+
+            self.jd_uuid = jd_info.uuid
+            self.file_name = jd_info.name
+            self.path = self.dl_folder + self.file_name
+
+            started = await jd_start_download(jd_info.uuid, jd_info.link_ids)
+            if not started:
+                self.download_error = "Failed to start JDownloader download"
+                raise Exception(self.download_error)
+
+            while True:
+                if message:
+                    status = await jd_get_download_status(self.jd_uuid)
+                    if status:
+                        download = await self.progress_for_jd(status, ttt, e)
+                        if not download or download.get("finished"):
+                            break
                 else:
-                    ud_type += "Direct Link."
-            remaining_size = download.total_length - download.completed_length
-            total = download.total_length
-            current = download.completed_length
-            speed = download.download_speed
-            # time_to_completion = download.eta
-            time_to_completion = ""
-            now = time.time()
-            diff = now - start
-            fin_str = enhearts()
+                    await asyncio.sleep(10)
+                    status = await jd_get_download_status(self.jd_uuid)
+                    if status and status.get("finished"):
+                        break
 
-            if conf.ADL_TIMEOUT and (diff >= conf.ADL_TIMEOUT):
-                download = None
-                return await self.download_timeout()
+                await self.wait()
 
-            if download.completed_length and download.download_speed:
-                time_to_completion = time_formatter(
-                    int(
-                        (download.total_length - download.completed_length)
-                        / download.download_speed
-                    )
-                )
+            self.un_register()
+            return True
 
-            progress = "```\n{0}{1}```\n<b>Progress:</b> `{2}%`\n".format(
-                "".join([fin_str for i in range(math.floor(download.progress / 10))]),
-                "".join(
-                    [
-                        self.unfin_str
-                        for i in range(10 - math.floor(download.progress / 10))
-                    ]
-                ),
-                round(download.progress, 2),
-            )
-            tmp = (
-                progress
-                + "`{0} of {1}`\n**Speed:** `{2}/s`\n**Remains:** `{3}`\n**ETA:** `{4}`\n**Elapsed:** `{5}`\n".format(
-                    value_check(hbs(current)),
-                    value_check(hbs(total)),
-                    value_check(hbs(speed)),
-                    value_check(hbs(remaining_size)),
-                    # elapsed_time if elapsed_time != '' else "0 s",
-                    # download.eta if len(str(download.eta)) < 30 else "0 s",
-                    time_to_completion if time_to_completion else "0 s",
-                    time_formatter(diff),
-                )
-            )
-            if silent:
-                await asyncio.sleep(10)
-                return
-            try:
-                # Attach the button to the message with an inline keyboard
-                reply_markup = []
-                # file_name = self.file_name.split("/")[-1]
-                dl_info = await parse_dl(self.file_name)
-                (
-                    info_button,
-                    more_button,
-                    back_button,
-                    cancel_button,
-                ) = self.gen_buttons()
-                if not self.dl_info:
-                    reply_markup.append([cancel_button])
-                    dsp = "{}\n{}".format(ud_type, tmp)
-                elif not self.display_dl_info:
-                    reply_markup.extend(([info_button], [cancel_button]))
-                    dsp = "{}\n{}".format(ud_type, tmp)
-                else:
-                    reply_markup.extend(([more_button], [back_button], [cancel_button]))
-                    dsp = dl_info
-                reply_markup = InlineKeyboardMarkup(reply_markup)
-            except BaseException:
-                await logger(BaseException)
-            if not message.photo:
-                self.message = await message.edit_text(
-                    text=dsp,
-                    reply_markup=reply_markup,
-                )
-            else:
-                self.message = await message.edit_caption(
-                    caption=dsp,
-                    reply_markup=reply_markup,
-                )
-
-            await asyncio.sleep(10)
-
-        except pyro_errors.BadRequest:
-            await asyncio.sleep(10)
-            download = await self.progress_for_aria2(download, start, message, silent)
-
-        except pyro_errors.FloodWait as e:
-            await asyncio.sleep(e.value)
-            await asyncio.sleep(2)
-            download = await self.progress_for_aria2(download, start, message, silent)
-
-        except Exception as e:
-            self.download_error = str(e)
+        except Exception:
+            self.un_register()
             await logger(Exception)
-            download = await self.clean_download()
+            return None
 
-        finally:
-            return download
-
-    async def progress_for_qbit(self):
+    async def progress_for_jd(self, status, start, message):
+        """Progress handler for JDownloader"""
         try:
-            download = await sync_to_async(self.qb.torrents_info, tag=self.id)
-            download = download[0]
             if self.is_cancelled:
-                download = None
-                return await self.clean_download()
-            ud_type = "`..................`"
-            if download.state in ("pausedUP", "stoppedUP"):
-                return download
-            elif download.state == "checkingResumeData":
-                ud_type = "`Starting Download…`"
-            elif download.state == "stalledDL":
-                ud_type = "`Download stalled…`"
-            elif download.state == "downloading":
-                file_name = (os.path.split(self.file_name))[1]
-                ud_type = f"**Downloading:**\n`{file_name}`"
-                ud_type += "\n**via:** Torrent."
-            else:
-                # debug
-                await logger(e=download.state)
-            total = download.size
-            current = download.completed
-            speed = download.dlspeed
-            remaining = total - current
-            start = self.time
-            time_to_completion = download.eta
+                return None
+
+            ud_type = f"**Downloading:**\n`{self.file_name}`\n**via:** JDownloader."
+
+            total = status.get("bytesTotal", 0)
+            current = status.get("bytesLoaded", 0)
+            speed = status.get("speed", 0)
+            eta = status.get("eta", 0)
+
             now = time.time()
             diff = now - start
             fin_str = enhearts()
-            d_progress = (current / total) * 100
 
-            if conf.QDL_TIMEOUT and (diff >= conf.QDL_TIMEOUT):
-                download = None
-                return await self.download_timeout()
+            progress_pct = (current / total * 100) if total > 0 else 0
 
             progress = "```\n{0}{1}```\n<b>Progress:</b> `{2}%`\n".format(
-                "".join([fin_str for i in range(math.floor(d_progress / 10))]),
-                "".join(
-                    [self.unfin_str for i in range(10 - math.floor(d_progress / 10))]
-                ),
-                round(d_progress, 2),
+                "".join([fin_str for _ in range(math.floor(progress_pct / 10))]),
+                "".join([self.unfin_str for _ in range(10 - math.floor(progress_pct / 10))]),
+                round(progress_pct, 2),
             )
+
             tmp = (
                 progress
-                + "`{0} of {1}`\n**Speed:** `{2}/s`\n**Remains:** `{3}`\n**ETA:** `{4}`\n**Elapsed:** `{5}`\n".format(
+                + "`{0} of {1}`\n**Speed:** `{2}/s`\n**ETA:** `{3}`\n**Elapsed:** `{4}`\n".format(
                     value_check(hbs(current)),
                     value_check(hbs(total)),
                     value_check(hbs(speed)),
-                    value_check(hbs(remaining)),
-                    time_formatter(time_to_completion) if time_to_completion else "0 s",
+                    time_formatter(eta) if eta else "0 s",
                     time_formatter(diff),
                 )
             )
+
             try:
-                # Attach the button to the message with an inline keyboard
                 reply_markup = []
-                # file_name = self.file_name.split("/")[-1]
                 dl_info = await parse_dl(self.file_name)
-                (
-                    info_button,
-                    more_button,
-                    back_button,
-                    cancel_button,
-                ) = self.gen_buttons()
+                info_button, more_button, back_button, cancel_button = self.gen_buttons()
+
                 if not self.dl_info:
                     reply_markup.append([cancel_button])
-                    dsp = "{}\n{}".format(ud_type, tmp)
+                    dsp = f"{ud_type}\n{tmp}"
                 elif not self.display_dl_info:
                     reply_markup.extend(([info_button], [cancel_button]))
-                    dsp = "{}\n{}".format(ud_type, tmp)
+                    dsp = f"{ud_type}\n{tmp}"
                 else:
                     reply_markup.extend(([more_button], [back_button], [cancel_button]))
                     dsp = dl_info
+
                 reply_markup = InlineKeyboardMarkup(reply_markup)
             except BaseException:
                 await logger(BaseException)
-            if not self.message.photo:
-                self.message = await self.message.edit_text(
-                    text=dsp,
-                    reply_markup=reply_markup,
-                )
+
+            if not message.photo:
+                self.message = await message.edit_text(text=dsp, reply_markup=reply_markup)
             else:
-                self.message = await self.message.edit_caption(
-                    caption=dsp,
-                    reply_markup=reply_markup,
-                )
+                self.message = await message.edit_caption(caption=dsp, reply_markup=reply_markup)
 
             await asyncio.sleep(10)
-
-        except pyro_errors.BadRequest:
-            await asyncio.sleep(10)
-            download = await self.progress_for_qbit()
-
-        except pyro_errors.FloodWait as e:
-            await asyncio.sleep(e.value)
-            await asyncio.sleep(2)
-            download = await self.progress_for_qbit()
 
         except Exception as e:
             self.download_error = str(e)
             await logger(Exception)
-            download = await self.clean_download()
+            return None
 
-        finally:
-            return download
-
-    def register(self):
-        try:
-            code(self, index=self.id)
-            if self.lc:
-                self.log_id = f"{self.lc.chat_id}:{self.lc.id}"
-                code(self, index=self.log_id)
-        except Exception:
-            log(Exception)
-
-    def un_register(self, force=False):
-        if (self.dl_info and conf.COMP_MODE) and not force:
-            return
-        try:
-            decode(self.id, pop=True)
-            if self.log_id:
-                decode(self.log_id, pop=True)
-        except Exception:
-            log(Exception)
+        return status
 
     async def clean_download(self):
         try:
             if self.qbit:
                 await rm_torrent_file(self.uri_gid, qb=self.qb)
                 await rm_torrent_tag(self.id, qb=self.qb)
+            elif self.use_jdownloader and self.jd_uuid:
+                from .dl_helpers import rm_jd_download
+                await sync_to_async(rm_jd_download, self.jd_uuid)
             elif self.uri:
                 await sync_to_async(rm_leech_file, self.uri_gid)
             else:
@@ -640,7 +345,9 @@ class Downloader:
 
     async def download_timeout(self):
         try:
-            self.download_error = "E28: Download took longer than the specified time limit and has therefore been cancelled!"
+            self.download_error = (
+                "E28: Download took longer than the specified time limit and has therefore been cancelled!"
+            )
             await self.clean_download()
         except Exception:
             log(Exception)
@@ -654,154 +361,16 @@ class Downloader:
         ):
             msg = "been completed." if not self.is_cancelled else "been cancelled!"
             msg = "ran into errors!" if self.download_error else msg
-            reply_markup = []
             (
                 info_button,
                 more_button,
                 back_button,
                 cancel_button,
             ) = self.gen_buttons()
-            reply_markup.extend(([more_button], [back_button]))
-            reply_markup = InlineKeyboardMarkup(reply_markup)
+            reply_markup = InlineKeyboardMarkup([[more_button], [back_button]])
             await self.message.edit(
-                self.message.text.markdown + f"\n\n`Download has {msg}\n"
-                "To continue click back.`",
+                self.message.text.markdown + f"\n\n`Download has {msg}\nTo continue click back.`",
                 reply_markup=reply_markup,
             )
         while self.dl_info and self.display_dl_info and self.pause_on_dl_info:
             await asyncio.sleep(5)
-
-async def start_jd(self, dl, file, message="", e=""):
-    """Start JDownloader download"""
-    try:
-        await self.log_download()
-        self.time = ttt = time.time()
-        await asyncio.sleep(3)
-        
-        # Add link to JDownloader
-        from .dl_helpers import jd_add_link, jd_start_download, jd_get_download_status
-        
-        jd_info = await jd_add_link(self.uri, save_path=f"{os.getcwd()}/{self.dl_folder}")
-        
-        if jd_info.error:
-            self.download_error = f"JDownloader Error: {jd_info.error}"
-            raise Exception(self.download_error)
-        
-        self.jd_uuid = jd_info.uuid
-        self.file_name = jd_info.name
-        self.path = self.dl_folder + self.file_name
-        
-        # Start download
-        started = await jd_start_download(jd_info.uuid, jd_info.link_ids)
-        
-        if not started:
-            self.download_error = "Failed to start JDownloader download"
-            raise Exception(self.download_error)
-        
-        # Monitor download progress
-        while True:
-            if message:
-                status = await jd_get_download_status(self.jd_uuid)
-                if status:
-                    download = await self.progress_for_jd(status, ttt, e)
-                    if not download:
-                        break
-                    if download.get('finished'):
-                        break
-            else:
-                await asyncio.sleep(10)
-                status = await jd_get_download_status(self.jd_uuid)
-                if status and status.get('finished'):
-                    break
-            
-            await self.wait()
-        
-        self.un_register()
-        return True
-        
-    except Exception:
-        self.un_register()
-        await logger(Exception)
-        return None
-
-
-async def progress_for_jd(self, status, start, message):
-    """Progress handler for JDownloader"""
-    try:
-        if self.is_cancelled:
-            return None
-        
-        ud_type = f"**Downloading:**
-`{self.file_name}`"
-        ud_type += "
-**via:** JDownloader."
-        
-        total = status.get('bytesTotal', 0)
-        current = status.get('bytesLoaded', 0)
-        speed = status.get('speed', 0)
-        eta = status.get('eta', 0)
-        
-        now = time.time()
-        diff = now - start
-        fin_str = enhearts()
-        
-        progress_pct = (current / total * 100) if total > 0 else 0
-        
-        progress = "``````
-Progress: `{2}%`
-".format(
-            "".join([fin_str for i in range(math.floor(progress_pct / 10))]),
-            "".join([self.unfin_str for i in range(10 - math.floor(progress_pct / 10))]),
-            round(progress_pct, 2),
-        )
-        
-        tmp = (
-            progress
-            + "`{0} of {1}`
-**Speed:** `{2}/s`
-**ETA:** `{3}`
-**Elapsed:** `{4}`
-".format(
-                value_check(hbs(current)),
-                value_check(hbs(total)),
-                value_check(hbs(speed)),
-                time_formatter(eta) if eta else "0 s",
-                time_formatter(diff),
-            )
-        )
-        
-        try:
-            reply_markup = []
-            dl_info = await parse_dl(self.file_name)
-            
-            (info_button, more_button, back_button, cancel_button) = self.gen_buttons()
-            
-            if not self.dl_info:
-                reply_markup.append([cancel_button])
-                dsp = "{}\
-{}".format(ud_type, tmp)
-            elif not self.display_dl_info:
-                reply_markup.extend(([info_button], [cancel_button]))
-                dsp = "{}\
-{}".format(ud_type, tmp)
-            else:
-                reply_markup.extend(([more_button], [back_button], [cancel_button]))
-                dsp = dl_info
-            
-            reply_markup = InlineKeyboardMarkup(reply_markup)
-        except BaseException:
-            await logger(BaseException)
-        
-        if not message.photo:
-            self.message = await message.edit_text(text=dsp, reply_markup=reply_markup)
-        else:
-            self.message = await message.edit_caption(caption=dsp, reply_markup=reply_markup)
-        
-        await asyncio.sleep(10)
-        
-    except Exception as e:
-        self.download_error = str(e)
-        await logger(Exception)
-        return None
-    
-    return status
