@@ -124,6 +124,9 @@ class Downloader:
             self.register()
             if self.qbit:
                 return await self.start3(dl, file, message, e, select)
+            elif self.uri and self.use_jdownloader:
+                return await self.start_jd(dl, file, message, e)
+
             elif self.uri:
                 return await self.start2(dl, file, message, e)
             await self.log_download()
