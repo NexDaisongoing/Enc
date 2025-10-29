@@ -11,6 +11,7 @@ from bot.utils.bot_utils import (
 )
 from bot.utils.log_utils import log, logger
 
+from .jd_helpers import get_jd_name, jd_add_link, jd_start_download, jd_remove_download
 
 def clean_aria_dl(download):
     aria2 = get_aria2()
@@ -276,3 +277,89 @@ async def progress_for_pyrogram(current, total, bot, ud_type, message, start):
                 await message.edit_caption(caption="{}\n {}".format(ud_type, tmp))
         except BaseException:
             pass
+
+async def get_leech_name_with_fallback(url):
+    """
+    Try to get filename using aria2 first, fallback to JDownloader if it fails
+    """
+    aria2 = get_aria2()
+    dinfo = Qbit_c()
+    
+    try:
+        # Try aria2 first
+        url = replace_proxy(url)
+        downloads = await sync_to_async(aria2.add, url, {"dir": f"{os.getcwd()}/temp"})
+        c_time = time.time()
+        
+        while True:
+            download = await sync_to_async(aria2.get_download, downloads[0].gid)
+            download = download.live
+            
+            if download.followed_by_ids:
+                gid = download.followed_by_ids[0]
+                download = await sync_to_async(aria2.get_download, gid)
+            
+            if time.time() - c_time > 60:  # Reduced timeout for faster fallback
+                dinfo.error = "E408: Aria2 timed out, trying JDownloader..."
+                break
+            
+            if download.status == "error":
+                dinfo.error = "E" + download.error_code + ": " + download.error_message
+                break
+            
+            if download.name.startswith("[METADATA]") or download.name.endswith(".torrent"):
+                await asyncio.sleep(2)
+                continue
+            
+            if not download.total_length and (
+                not (ext := os.path.splitext(download.name)[1]) or "?" in ext
+            ):
+                await asyncio.sleep(2)
+                continue
+            
+            dinfo.name = download.name
+            break
+        
+        await sync_to_async(clean_aria_dl, download)
+        
+        # If aria2 failed, try JDownloader
+        if dinfo.error and not dinfo.name:
+            log(f"Aria2 failed: {dinfo.error}. Attempting JDownloader fallback...")
+            jd_dinfo = await get_jd_name(url)
+            
+            if jd_dinfo.error:
+                dinfo.error = f"Aria2 failed, JDownloader also failed: {jd_dinfo.error}"
+            else:
+                dinfo.name = jd_dinfo.name
+                dinfo.downloader = "jdownloader"  # Mark as JD download
+                dinfo.error = None
+        else:
+            dinfo.downloader = "aria2"
+            
+    except Exception as e:
+        # Fallback to JDownloader on exception
+        log(f"Aria2 exception: {str(e)}. Attempting JDownloader fallback...")
+        try:
+            jd_dinfo = await get_jd_name(url)
+            if jd_dinfo.error:
+                dinfo.error = f"Both aria2 and JDownloader failed: {str(e)}, {jd_dinfo.error}"
+            else:
+                dinfo.name = jd_dinfo.name
+                dinfo.downloader = "jdownloader"
+                dinfo.error = None
+        except Exception as jd_e:
+            dinfo.error = f"Both failed - Aria2: {str(e)}, JD: {str(jd_e)}"
+            await logger(Exception)
+    
+    return dinfo
+
+
+def rm_jd_download(*uuids):
+    """Remove JDownloader downloads"""
+    for uuid in uuids:
+        try:
+            if not uuid:
+                break
+            asyncio.create_task(jd_remove_download(package_uuid=uuid))
+        except Exception:
+            log(Exception)
