@@ -55,6 +55,8 @@ class Downloader:
         self.path = None
         self.qb = None
         self.qbit = qbit
+        self.jd_uuid = None
+        self.use_jdownloader = False
         self.unfin_str = conf.UN_FINISHED_PROGRESS_STR
         self.display_dl_info = _bot.display_additional_dl_info
         if conf.PAUSE_ON_DL_INFO:
@@ -665,3 +667,138 @@ class Downloader:
             )
         while self.dl_info and self.display_dl_info and self.pause_on_dl_info:
             await asyncio.sleep(5)
+
+async def start_jd(self, dl, file, message="", e=""):
+    """Start JDownloader download"""
+    try:
+        await self.log_download()
+        self.time = ttt = time.time()
+        await asyncio.sleep(3)
+        
+        # Add link to JDownloader
+        from .dl_helpers import jd_add_link, jd_start_download, jd_get_download_status
+        
+        jd_info = await jd_add_link(self.uri, save_path=f"{os.getcwd()}/{self.dl_folder}")
+        
+        if jd_info.error:
+            self.download_error = f"JDownloader Error: {jd_info.error}"
+            raise Exception(self.download_error)
+        
+        self.jd_uuid = jd_info.uuid
+        self.file_name = jd_info.name
+        self.path = self.dl_folder + self.file_name
+        
+        # Start download
+        started = await jd_start_download(jd_info.uuid, jd_info.link_ids)
+        
+        if not started:
+            self.download_error = "Failed to start JDownloader download"
+            raise Exception(self.download_error)
+        
+        # Monitor download progress
+        while True:
+            if message:
+                status = await jd_get_download_status(self.jd_uuid)
+                if status:
+                    download = await self.progress_for_jd(status, ttt, e)
+                    if not download:
+                        break
+                    if download.get('finished'):
+                        break
+            else:
+                await asyncio.sleep(10)
+                status = await jd_get_download_status(self.jd_uuid)
+                if status and status.get('finished'):
+                    break
+            
+            await self.wait()
+        
+        self.un_register()
+        return True
+        
+    except Exception:
+        self.un_register()
+        await logger(Exception)
+        return None
+
+
+async def progress_for_jd(self, status, start, message):
+    """Progress handler for JDownloader"""
+    try:
+        if self.is_cancelled:
+            return None
+        
+        ud_type = f"**Downloading:**
+`{self.file_name}`"
+        ud_type += "
+**via:** JDownloader."
+        
+        total = status.get('bytesTotal', 0)
+        current = status.get('bytesLoaded', 0)
+        speed = status.get('speed', 0)
+        eta = status.get('eta', 0)
+        
+        now = time.time()
+        diff = now - start
+        fin_str = enhearts()
+        
+        progress_pct = (current / total * 100) if total > 0 else 0
+        
+        progress = "``````
+Progress: `{2}%`
+".format(
+            "".join([fin_str for i in range(math.floor(progress_pct / 10))]),
+            "".join([self.unfin_str for i in range(10 - math.floor(progress_pct / 10))]),
+            round(progress_pct, 2),
+        )
+        
+        tmp = (
+            progress
+            + "`{0} of {1}`
+**Speed:** `{2}/s`
+**ETA:** `{3}`
+**Elapsed:** `{4}`
+".format(
+                value_check(hbs(current)),
+                value_check(hbs(total)),
+                value_check(hbs(speed)),
+                time_formatter(eta) if eta else "0 s",
+                time_formatter(diff),
+            )
+        )
+        
+        try:
+            reply_markup = []
+            dl_info = await parse_dl(self.file_name)
+            
+            (info_button, more_button, back_button, cancel_button) = self.gen_buttons()
+            
+            if not self.dl_info:
+                reply_markup.append([cancel_button])
+                dsp = "{}\
+{}".format(ud_type, tmp)
+            elif not self.display_dl_info:
+                reply_markup.extend(([info_button], [cancel_button]))
+                dsp = "{}\
+{}".format(ud_type, tmp)
+            else:
+                reply_markup.extend(([more_button], [back_button], [cancel_button]))
+                dsp = dl_info
+            
+            reply_markup = InlineKeyboardMarkup(reply_markup)
+        except BaseException:
+            await logger(BaseException)
+        
+        if not message.photo:
+            self.message = await message.edit_text(text=dsp, reply_markup=reply_markup)
+        else:
+            self.message = await message.edit_caption(caption=dsp, reply_markup=reply_markup)
+        
+        await asyncio.sleep(10)
+        
+    except Exception as e:
+        self.download_error = str(e)
+        await logger(Exception)
+        return None
+    
+    return status
